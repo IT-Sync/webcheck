@@ -5,7 +5,7 @@ import asyncio
 import re
 import json
 from ipwhois import IPWhois
-from datetime import datetime
+from datetime import datetime, timezone
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 
@@ -33,30 +33,38 @@ from cryptography.hazmat.backends import default_backend
 #
 #    return False
 
-async def check_http(url, retries=3, delay=10):
-    timeout = aiohttp.ClientTimeout(total=15)
-#    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+async def check_http(url, retries=3, delay=5):
+    timeout = aiohttp.ClientTimeout(total=12)
     headers = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/113.0.0.0 Safari/537.36 "
-        "@ITSync_WebCheckBot"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Connection": "keep-alive"
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/113.0.0.0 Safari/537.36 "
+            "@ITSync_WebCheckBot"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Connection": "keep-alive",
     }
-    for attempt in range(retries):
-        try:
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                async with session.get(url, allow_redirects=True, ssl=False) as resp:
-                    print(f"[Attempt {attempt+1}] HTTP {resp.status} for {url}")
-                    if 200 <= resp.status < 404:
-                        return True
-        except Exception as e:
-            print(f"[Attempt {attempt+1}] Error checking {url}: {e}")
-        await asyncio.sleep(delay)
+
+    connector = aiohttp.TCPConnector(ssl=False, limit=10)
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers, connector=connector) as session:
+        for attempt in range(1, retries + 1):
+            try:
+                for method in ("HEAD", "GET"):
+                    async with session.request(method, url, allow_redirects=True) as resp:
+                        print(f"[Attempt {attempt}] {method} {resp.status} for {url}")
+                        if 200 <= resp.status < 404:
+                            return True
+
+                        # Если HEAD не дал положительный ответ, пробуем GET.
+                        if method == "HEAD":
+                            continue
+                        break
+            except Exception as e:
+                print(f"[Attempt {attempt}] Error checking {url}: {e}")
+
+            await asyncio.sleep(delay * attempt)
 
     return False
 
@@ -69,8 +77,15 @@ async def check_ssl(url):
             with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
                 cert = ssock.getpeercert(True)
                 x509_cert = x509.load_der_x509_certificate(cert, default_backend())
-                expire_date = x509_cert.not_valid_after
-                return (expire_date - datetime.utcnow()).days
+
+                if hasattr(x509_cert, "not_valid_after_utc"):
+                    expire_date = x509_cert.not_valid_after_utc
+                    now = datetime.now(timezone.utc)
+                else:
+                    expire_date = x509_cert.not_valid_after
+                    now = datetime.utcnow()
+
+                return (expire_date - now).days
     except:
         return -1
 

@@ -182,6 +182,50 @@ async def admin_delete_site_for_user(query: types.CallbackQuery):
         await query.message.answer(f"⚠️ Сайт {url} не найден у пользователя {user_id}")
     await query.answer("Удалено.")
 
+@router.callback_query(F.data.startswith("adminuser:"))
+async def admin_user_details(query: types.CallbackQuery):
+    if query.from_user.id != BOT_OWNER_ID:
+        return await query.answer("⛔ Нет доступа", show_alert=True)
+
+    try:
+        user_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверный формат данных", show_alert=True)
+
+    sites = get_sites(user_id)
+    if not sites:
+        await query.message.answer(f"У пользователя {user_id} нет сайтов.")
+        return await query.answer("Нет данных")
+
+    username = next((row[2] for row in sites if row[2]), None)
+    total = len(sites)
+    chunk_size = 5
+
+    log_user_action(
+        query.from_user.id,
+        f"/admin view {user_id}",
+        query.from_user.username
+    )
+
+    for start in range(0, total, chunk_size):
+        chunk = sites[start:start + chunk_size]
+        lines = []
+        kb = InlineKeyboardBuilder()
+        for idx, site in enumerate(chunk, start=start + 1):
+            url = site[3]
+            lines.append(f"{idx}. {url}")
+            kb.button(text=f"🗑 {idx}", callback_data=f"admindelete:{user_id}:{url}")
+        kb.adjust(2)
+
+        header = f"Пользователь {user_id}"
+        if username:
+            header += f" (@{username})"
+        header += f"\nСайты {start + 1}-{start + len(chunk)} из {total}:"
+
+        await query.message.answer(header + "\n" + "\n".join(lines), reply_markup=kb.as_markup())
+
+    await query.answer("Отправлено")
+
 
 async def send_status_report(user_id, url, bot):
     http_ok = await check_http(url)
@@ -232,14 +276,32 @@ async def admin_overview(message: types.Message):
     log_user_action(message.from_user.id, "/admin", message.from_user.username)
     all_sites = get_all_sites(full=True)
     if not all_sites:
-        await message.answer("Нет зарегистрированных сайтов.")
-    else:
-        for user_id, url, username in all_sites:
-            text = f"{user_id}: {url} — @{username}" if username else f"{user_id}: {url} — без username"
-            kb = InlineKeyboardBuilder()
-            #kb.button(text="🗑 Удалить", callback_data=f"admindelete_raw:{url}")
-            kb.button(text="🗑 Удалить", callback_data=f"admindelete:{user_id}:{url}")
-            await message.answer(text, reply_markup=kb.as_markup())
+        return await message.answer("Нет зарегистрированных сайтов.")
+
+    users = {}
+    for user_id, url, username in all_sites:
+        entry = users.setdefault(user_id, {"username": username, "sites": []})
+        if username and not entry["username"]:
+            entry["username"] = username
+        entry["sites"].append(url)
+
+    sorted_users = sorted(users.items(), key=lambda item: item[0])
+    chunk_size = 10
+
+    await message.answer("Выберите пользователя, чтобы посмотреть сайты и удалить их при необходимости.")
+
+    for i in range(0, len(sorted_users), chunk_size):
+        chunk = sorted_users[i:i + chunk_size]
+        lines = []
+        kb = InlineKeyboardBuilder()
+        for user_id, data in chunk:
+            username = data["username"]
+            username_text = f"@{username}" if username else "без username"
+            lines.append(f"{user_id}: {len(data['sites'])} сайтов — {username_text}")
+            kb.button(text=f"👤 {user_id}", callback_data=f"adminuser:{user_id}")
+        kb.adjust(2)
+        text = "Пользователи:\n" + "\n".join(lines)
+        await message.answer(text, reply_markup=kb.as_markup())
 
 @router.message(F.text == "/status")
 async def admin_status(message: types.Message):
