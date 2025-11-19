@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtualenv
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+*.log
+*.pid
+
+# PostgreSQL volume
+pgdata/
+
+# Environment
+.env
+
+# Byte-compiled
+*.pyo
+*.pyd
+
+# Misc
+*.swp
+.DS_Store
+
