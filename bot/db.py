@@ -53,6 +53,15 @@ def delete_site(user_id, url):
     conn.commit()
     return c.rowcount > 0
 
+def delete_user_data(user_id):
+    """Полностью удаляет пользователя: сайты и его действия в логах."""
+    c.execute("DELETE FROM sites WHERE user_id = %s", (user_id,))
+    sites_deleted = c.rowcount
+    c.execute("DELETE FROM user_logs WHERE user_id = %s", (user_id,))
+    logs_deleted = c.rowcount
+    conn.commit()
+    return sites_deleted, logs_deleted
+
 def get_all_sites(full=False):
     if full:
         c.execute("SELECT user_id, url, username FROM sites")
@@ -226,4 +235,3 @@ def migrate_add_notification_flags():
     """)
 
     conn.commit()
-

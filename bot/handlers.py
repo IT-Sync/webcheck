@@ -5,7 +5,7 @@ from db import (
     get_event_logs, log_user_action, get_user_logs,
     export_user_logs_csv as export_logs_file,
     export_sites_csv as export_sites_file,
-    admin_delete_site, update_site_status
+    admin_delete_site, update_site_status, delete_user_data
 )
 from monitor import check_http, check_ssl, check_domain_expiry, get_geo_info
 from subfinder import find_subdomains, export_subdomains_csv
@@ -262,6 +262,38 @@ async def admin_status(message: types.Message):
         lines.append(f"{url}: {status} — {user_info}")
 
     await message.answer("Статусы сайтов:\n" + "\n".join(lines))
+
+@router.message(F.text.startswith("/remove_user"))
+async def admin_remove_user(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) != 2:
+        return await message.answer("Используйте: /remove_user <user_id>")
+
+    try:
+        target_user_id = int(parts[1].strip())
+    except ValueError:
+        return await message.answer("ID пользователя должен быть числом.")
+
+    log_user_action(
+        message.from_user.id,
+        f"/remove_user {target_user_id}",
+        message.from_user.username
+    )
+
+    sites_deleted, logs_deleted = delete_user_data(target_user_id)
+
+    if sites_deleted == 0 and logs_deleted == 0:
+        await message.answer(f"Данные пользователя {target_user_id} не найдены.")
+    else:
+        await message.answer(
+            f"🧹 Пользователь {target_user_id} удалён.\n"
+            f"Удалено сайтов: {sites_deleted}\n"
+            f"Удалено записей логов: {logs_deleted}"
+        )
 
 @router.message(F.text == "/events")
 async def admin_events(message: types.Message):
