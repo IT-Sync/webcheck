@@ -258,16 +258,26 @@ async def send_status_report(user_id, url, bot):
 async def status_me(message: types.Message):
     log_user_action(message.from_user.id, "/statusme", message.from_user.username)
     args = message.text.split(" ", 1)
+    user_sites = get_sites(message.from_user.id)
+
+    def format_status(site_row):
+        url = site_row[3]
+        status = site_row[4] or "Статус ещё не получен."
+        checked_at = site_row[5]
+        checked_text = checked_at.strftime("%Y-%m-%d %H:%M:%S") if checked_at else "не проверялся"
+        return f"🔗 {url}\n{status}\n🕒 Последняя проверка: {checked_text}"
+
     if len(args) == 2:
         url = normalize_url(args[1].strip())
-        await message.answer(f"Проверка {url}...")
-        await send_status_report(message.from_user.id, url, message.bot)
+        site = next((s for s in user_sites if s[3] == url), None)
+        if not site:
+            return await message.answer("❌ Этот сайт не найден среди ваших.")
+        await message.answer(format_status(site))
     else:
-        sites = get_sites(message.from_user.id)
-        if not sites:
-            await message.answer("У вас нет сайтов.")
-        for site in sites:
-            await send_status_report(message.from_user.id, site[3], message.bot)
+        if not user_sites:
+            return await message.answer("У вас нет сайтов.")
+        for site in user_sites:
+            await message.answer(format_status(site))
 
 @router.message(F.text == "/admin")
 async def admin_overview(message: types.Message):
