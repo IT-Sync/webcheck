@@ -3,6 +3,8 @@ import os
 from datetime import datetime, timedelta
 import csv
 
+UNSET = object()
+
 conn = psycopg2.connect(
     dbname=os.getenv("DB_NAME", "devcheck"),
     user=os.getenv("DB_USER", "user"),
@@ -168,16 +170,16 @@ def get_site_flags(url):
         "domain_ts": row[4],
     }
 
-def set_site_flags(url, http=None, ssl=None, domain=None, ssl_ts=None, domain_ts=None):
-    if http is not None:
+def set_site_flags(url, http=UNSET, ssl=UNSET, domain=UNSET, ssl_ts=UNSET, domain_ts=UNSET):
+    if http is not UNSET:
         c.execute("UPDATE sites SET notified_http = %s WHERE url = %s", (http, url))
-    if ssl is not None:
+    if ssl is not UNSET:
         c.execute("UPDATE sites SET notified_ssl = %s WHERE url = %s", (ssl, url))
-    if domain is not None:
+    if domain is not UNSET:
         c.execute("UPDATE sites SET notified_domain = %s WHERE url = %s", (domain, url))
-    if ssl_ts is not None:
+    if ssl_ts is not UNSET:
         c.execute("UPDATE sites SET notified_ssl_ts = %s WHERE url = %s", (ssl_ts, url))
-    if domain_ts is not None:
+    if domain_ts is not UNSET:
         c.execute("UPDATE sites SET notified_domain_ts = %s WHERE url = %s", (domain_ts, url))
     conn.commit()
 
