@@ -55,6 +55,13 @@ def delete_site(user_id, url):
     conn.commit()
     return c.rowcount > 0
 
+def delete_user_sites(user_id):
+    """Удаляет только сайты пользователя, без очистки логов."""
+    c.execute("DELETE FROM sites WHERE user_id = %s", (user_id,))
+    deleted = c.rowcount
+    conn.commit()
+    return deleted
+
 def delete_user_data(user_id):
     """Полностью удаляет пользователя: сайты и его действия в логах."""
     c.execute("DELETE FROM sites WHERE user_id = %s", (user_id,))

@@ -1,5 +1,5 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from db import get_all_sites, update_site_status, log_event
+from db import get_all_sites, update_site_status, log_event, delete_user_sites, log_user_action
 from db import get_site_flags, set_site_flags
 from monitor import check_http, check_ssl, check_domain_expiry
 from datetime import datetime
@@ -97,15 +97,25 @@ async def process_site(bot, user_id, url):
             await notify_block(bot, user_id, url)
 
 async def notify_block(bot, user_id, url):
-    """Уведомление администратора о том, что пользователь заблокировал бота"""
+    """Обработка блокировки: очистка сайтов пользователя и уведомление администратора."""
+    deleted_sites = delete_user_sites(user_id)
+    log_user_action(user_id, f"Автоудаление сайтов после блокировки бота: {deleted_sites}")
     try:
-        await bot.send_message(BOT_OWNER_ID, f"⚠️ Пользователь `{user_id}` заблокировал бота.\nСайт: {url}", parse_mode="Markdown")
+        if deleted_sites > 0:
+            await bot.send_message(
+                BOT_OWNER_ID,
+                (
+                    f"⚠️ Пользователь `{user_id}` заблокировал бота.\n"
+                    f"Удалено сайтов: {deleted_sites}\n"
+                    f"Триггер: {url}"
+                ),
+                parse_mode="Markdown"
+            )
     except Exception as e:
         print(f"Не удалось уведомить администратора: {e}")
-    log_event(url, f"Пользователь {user_id} заблокировал бота")
+    log_event(url, f"Пользователь {user_id} заблокировал бота; удалено сайтов: {deleted_sites}")
 
 async def start_scheduler(bot):
     scheduler = AsyncIOScheduler()
     scheduler.add_job(monitor, "interval", minutes=5, args=[bot])
     scheduler.start()
-
