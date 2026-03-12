@@ -8,13 +8,19 @@ import os
 import asyncio
 
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
+MAX_CONCURRENT_CHECKS = int(os.getenv("MAX_CONCURRENT_CHECKS", "30"))
 
 async def monitor(bot):
     sites = get_all_sites()
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
     tasks = []
     for user_id, url in sites:
-        tasks.append(process_site(bot, user_id, url))
+        tasks.append(process_site_limited(bot, semaphore, user_id, url))
     await asyncio.gather(*tasks)
+
+async def process_site_limited(bot, semaphore, user_id, url):
+    async with semaphore:
+        await process_site(bot, user_id, url)
 
 async def process_site(bot, user_id, url):
     try:
@@ -99,9 +105,9 @@ async def process_site(bot, user_id, url):
 async def notify_block(bot, user_id, url):
     """Обработка блокировки: очистка сайтов пользователя и уведомление администратора."""
     deleted_sites = delete_user_sites(user_id)
-    log_user_action(user_id, f"Автоудаление сайтов после блокировки бота: {deleted_sites}")
-    try:
-        if deleted_sites > 0:
+    if deleted_sites > 0:
+        log_user_action(user_id, f"Автоудаление сайтов после блокировки бота: {deleted_sites}")
+        try:
             await bot.send_message(
                 BOT_OWNER_ID,
                 (
@@ -111,9 +117,9 @@ async def notify_block(bot, user_id, url):
                 ),
                 parse_mode="Markdown"
             )
-    except Exception as e:
-        print(f"Не удалось уведомить администратора: {e}")
-    log_event(url, f"Пользователь {user_id} заблокировал бота; удалено сайтов: {deleted_sites}")
+        except Exception as e:
+            print(f"Не удалось уведомить администратора: {e}")
+        log_event(url, f"Пользователь {user_id} заблокировал бота; удалено сайтов: {deleted_sites}")
 
 async def start_scheduler(bot):
     scheduler = AsyncIOScheduler()

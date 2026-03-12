@@ -178,16 +178,31 @@ def get_site_flags(url):
     }
 
 def set_site_flags(url, http=UNSET, ssl=UNSET, domain=UNSET, ssl_ts=UNSET, domain_ts=UNSET):
+    updates = []
+    values = []
+
     if http is not UNSET:
-        c.execute("UPDATE sites SET notified_http = %s WHERE url = %s", (http, url))
+        updates.append("notified_http = %s")
+        values.append(http)
     if ssl is not UNSET:
-        c.execute("UPDATE sites SET notified_ssl = %s WHERE url = %s", (ssl, url))
+        updates.append("notified_ssl = %s")
+        values.append(ssl)
     if domain is not UNSET:
-        c.execute("UPDATE sites SET notified_domain = %s WHERE url = %s", (domain, url))
+        updates.append("notified_domain = %s")
+        values.append(domain)
     if ssl_ts is not UNSET:
-        c.execute("UPDATE sites SET notified_ssl_ts = %s WHERE url = %s", (ssl_ts, url))
+        updates.append("notified_ssl_ts = %s")
+        values.append(ssl_ts)
     if domain_ts is not UNSET:
-        c.execute("UPDATE sites SET notified_domain_ts = %s WHERE url = %s", (domain_ts, url))
+        updates.append("notified_domain_ts = %s")
+        values.append(domain_ts)
+
+    if not updates:
+        return
+
+    values.append(url)
+    query = f"UPDATE sites SET {', '.join(updates)} WHERE url = %s"
+    c.execute(query, tuple(values))
     conn.commit()
 
 
