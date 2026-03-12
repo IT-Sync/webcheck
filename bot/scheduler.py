@@ -9,6 +9,7 @@ import asyncio
 
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
 MAX_CONCURRENT_CHECKS = int(os.getenv("MAX_CONCURRENT_CHECKS", "30"))
+HTTP_FAILURE_THRESHOLD = int(os.getenv("HTTP_FAILURE_THRESHOLD", "2"))
 
 async def monitor(bot):
     sites = get_all_sites()
@@ -31,6 +32,7 @@ async def process_site(bot, user_id, url):
         notified_http = flags.get("http", False)
         notified_ssl = flags.get("ssl", False)
         notified_domain = flags.get("domain", False)
+        http_fail_count = flags.get("http_fail_count", 0)
         last_ssl_ts = flags.get("ssl_ts")
         last_domain_ts = flags.get("domain_ts")
         last_domain_check_ts = flags.get("domain_check_ts")
@@ -65,10 +67,14 @@ async def process_site(bot, user_id, url):
         issues = []
 
         # HTTP
-        if not http_ok and not notified_http:
-            issues.append("❌ Сайт недоступен")
-            log_event(url, "Сайт недоступен")
-            set_site_flags(url, http=True)
+        if not http_ok:
+            new_fail_count = http_fail_count + 1
+            if not notified_http and new_fail_count >= HTTP_FAILURE_THRESHOLD:
+                issues.append("❌ Сайт недоступен")
+                log_event(url, f"Сайт недоступен ({new_fail_count} подряд провалов)")
+                set_site_flags(url, http=True, http_fail_count=new_fail_count)
+            else:
+                set_site_flags(url, http_fail_count=new_fail_count)
         elif http_ok and notified_http:
             try:
                 await bot.send_message(user_id, f"✅ Сайт снова доступен: {url}")
@@ -76,7 +82,10 @@ async def process_site(bot, user_id, url):
                 await notify_block(bot, user_id, url)
                 return
             log_event(url, "Сайт восстановился")
-            set_site_flags(url, http=False)
+            set_site_flags(url, http=False, http_fail_count=0)
+        else:
+            if http_fail_count:
+                set_site_flags(url, http_fail_count=0)
 
         # SSL
         if 0 <= ssl_days <= 14:

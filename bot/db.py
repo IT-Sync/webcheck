@@ -165,7 +165,8 @@ def get_site_flags(url):
         SELECT notified_http, notified_ssl, notified_domain, 
                notified_ssl_ts, notified_domain_ts,
                domain_last_checked, domain_last_days,
-               domain_last_registrar, domain_last_contact_url
+               domain_last_registrar, domain_last_contact_url,
+               http_fail_count
         FROM sites WHERE url = %s
     """, (url,))
     row = c.fetchone()
@@ -181,6 +182,7 @@ def get_site_flags(url):
         "domain_days_cache": row[6],
         "domain_registrar_cache": row[7],
         "domain_contact_url_cache": row[8],
+        "http_fail_count": row[9] or 0,
     }
 
 def set_site_flags(
@@ -194,6 +196,7 @@ def set_site_flags(
     domain_days_cache=UNSET,
     domain_registrar_cache=UNSET,
     domain_contact_url_cache=UNSET,
+    http_fail_count=UNSET,
 ):
     updates = []
     values = []
@@ -225,6 +228,9 @@ def set_site_flags(
     if domain_contact_url_cache is not UNSET:
         updates.append("domain_last_contact_url = %s")
         values.append(domain_contact_url_cache)
+    if http_fail_count is not UNSET:
+        updates.append("http_fail_count = %s")
+        values.append(http_fail_count)
 
     if not updates:
         return
@@ -302,6 +308,11 @@ def migrate_add_notification_flags():
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                            WHERE table_name='sites' AND column_name='domain_last_contact_url') THEN
                 ALTER TABLE sites ADD COLUMN domain_last_contact_url TEXT;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='http_fail_count') THEN
+                ALTER TABLE sites ADD COLUMN http_fail_count INTEGER DEFAULT 0;
             END IF;
         END
         $$;

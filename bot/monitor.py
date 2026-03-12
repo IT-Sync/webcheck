@@ -4,6 +4,7 @@ import socket
 import asyncio
 import re
 import json
+import os
 from ipwhois import IPWhois
 from datetime import datetime, timezone
 from cryptography import x509
@@ -47,22 +48,38 @@ async def check_http(url, retries=3, delay=5):
         "Connection": "keep-alive",
     }
 
-    connector = aiohttp.TCPConnector(ssl=False, limit=10)
-    async with aiohttp.ClientSession(timeout=timeout, headers=headers, connector=connector) as session:
-        for attempt in range(1, retries + 1):
-            try:
-                for method in ("HEAD", "GET"):
-                    async with session.request(method, url, allow_redirects=True) as resp:
-                        print(f"[Attempt {attempt}] {method} {resp.status} for {url}")
-                        if 200 <= resp.status < 404:
-                            return True
+    allow_http_fallback = os.getenv("HTTP_ALLOW_PLAIN_FALLBACK", "1") == "1"
+    urls_to_try = [url]
+    if allow_http_fallback and url.startswith("https://"):
+        urls_to_try.append("http://" + url[len("https://"):])
 
-                        # Если HEAD не дал положительный ответ, пробуем GET.
-                        if method == "HEAD":
-                            continue
-                        break
-            except Exception as e:
-                print(f"[Attempt {attempt}] Error checking {url}: {e}")
+    connector = aiohttp.TCPConnector(ssl=False, limit=10)
+    async with aiohttp.ClientSession(
+        timeout=timeout,
+        headers=headers,
+        connector=connector,
+        max_field_size=65536
+    ) as session:
+        for attempt in range(1, retries + 1):
+            for current_url in urls_to_try:
+                try:
+                    for method in ("HEAD", "GET"):
+                        async with session.request(method, current_url, allow_redirects=False) as resp:
+                            print(f"[Attempt {attempt}] {method} {resp.status} for {current_url}")
+                            # 4xx означает, что сервер отвечает, но может блокировать ботов/доступ.
+                            # Для мониторинга доступности это считаем "сайт жив".
+                            if 200 <= resp.status < 500:
+                                return True
+
+                            # Если HEAD не дал положительный ответ, пробуем GET.
+                            if method == "HEAD":
+                                continue
+                            break
+                except Exception as e:
+                    error_text = str(e)
+                    if "Header value is too long" in error_text:
+                        return True
+                    print(f"[Attempt {attempt}] Error checking {current_url}: {error_text or type(e).__name__}")
 
             await asyncio.sleep(delay * attempt)
 
