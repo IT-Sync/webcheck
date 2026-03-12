@@ -109,44 +109,52 @@ async def check_ssl(url):
 async def check_domain_expiry(url):
     hostname = url.replace("https://", "").replace("http://", "").split("/")[0].lower()
     hostname = hostname.replace("www.", "")
-    parts = hostname.split(".")
-    if len(parts) > 2:
-        return -2, None, None  # Поддомен — не проверяем
+    parts = [p for p in hostname.split(".") if p]
+    if len(parts) < 2:
+        return -1, None, None
+
+    # Пробуем whois от более полного имени к базовому домену.
+    # Пример: a.b.example.com -> b.example.com -> example.com
+    candidates = [".".join(parts[i:]) for i in range(0, len(parts) - 1)]
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "whois", hostname,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        text = stdout.decode(errors="ignore")
+        for candidate in candidates:
+            proc = await asyncio.create_subprocess_exec(
+                "whois", candidate,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            text = stdout.decode(errors="ignore")
 
-        # 1. Дата окончания
-        match = re.search(
-            r"(paid-till|expiry date|expiration date)[\s:]+([0-9T:\-\.Z]+)",
-            text, flags=re.IGNORECASE
-        )
-        date_str = match.group(2).strip() if match else None
-        days = -1
-        if date_str:
-            for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%SZ", "%d-%b-%Y", "%Y.%m.%d"):
-                try:
-                    expire = datetime.strptime(date_str, fmt)
-                    days = (expire - datetime.utcnow()).days
-                    break
-                except:
-                    continue
+            # 1. Дата окончания
+            match = re.search(
+                r"(paid-till|expiry date|expiration date)[\s:]+([0-9T:\-\.Z]+)",
+                text, flags=re.IGNORECASE
+            )
+            date_str = match.group(2).strip() if match else None
+            days = -1
+            if date_str:
+                for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%SZ", "%d-%b-%Y", "%Y.%m.%d"):
+                    try:
+                        expire = datetime.strptime(date_str, fmt)
+                        days = (expire - datetime.utcnow()).days
+                        break
+                    except:
+                        continue
 
-        # 2. Регистратор
-        registrar_match = re.search(r"registrar:\s*(.+)", text, re.IGNORECASE)
-        registrar = registrar_match.group(1).strip() if registrar_match else "Не найден"
+            # 2. Регистратор
+            registrar_match = re.search(r"registrar:\s*(.+)", text, re.IGNORECASE)
+            registrar = registrar_match.group(1).strip() if registrar_match else "Не найден"
 
-        # 3. Ссылка на контакт/регистратора
-        contact_match = re.search(r"(admin-contact|registrar url):\s*(https?://\S+)", text, re.IGNORECASE)
-        contact_url = contact_match.group(2).strip() if contact_match else None
+            # 3. Ссылка на контакт/регистратора
+            contact_match = re.search(r"(admin-contact|registrar url):\s*(https?://\S+)", text, re.IGNORECASE)
+            contact_url = contact_match.group(2).strip() if contact_match else None
 
-        return days, registrar, contact_url
+            if days >= 0:
+                return days, registrar, contact_url
+
+        return -1, None, None
 
     except Exception as e:
         return -1, None, None

@@ -44,7 +44,8 @@ async def process_site(bot, user_id, url):
         should_refresh_domain = (
             last_domain_check_ts is None or
             (now - last_domain_check_ts).total_seconds() >= 24 * 60 * 60 or
-            cached_domain_days is None
+            cached_domain_days is None or
+            cached_domain_days == -2
         )
 
         if should_refresh_domain:
