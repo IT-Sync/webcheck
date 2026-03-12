@@ -16,6 +16,18 @@ from urllib.parse import urlparse
 
 router = Router()
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
+ADMIN_COMMANDS_TEXT = (
+    "🛠 Админ-команды:\n"
+    "/admin_help — список админских команд\n"
+    "/admin — пользователи и их сайты\n"
+    "/admin_stats — статистика по пользователям\n"
+    "/status — статусы всех сайтов\n"
+    "/events — журнал событий за 14 дней\n"
+    "/logs — действия пользователей за 14 дней\n"
+    "/export_logs — экспорт логов CSV\n"
+    "/export_sites — экспорт сайтов CSV\n"
+    "/remove_user <user_id> — удалить сайты и логи пользователя"
+)
 
 def normalize_url(url: str) -> str:
     url = url.strip().lower()
@@ -312,6 +324,58 @@ async def admin_overview(message: types.Message):
         kb.adjust(2)
         text = "Пользователи:\n" + "\n".join(lines)
         await message.answer(text, reply_markup=kb.as_markup())
+
+@router.message(F.text == "/admin_help")
+async def admin_help(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+    log_user_action(message.from_user.id, "/admin_help", message.from_user.username)
+    await message.answer(ADMIN_COMMANDS_TEXT)
+
+@router.message(F.text == "/admin_stats")
+async def admin_user_stats(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+
+    log_user_action(message.from_user.id, "/admin_stats", message.from_user.username)
+    all_sites = get_all_sites(full=True)
+    logs = get_user_logs()
+
+    if not all_sites:
+        return await message.answer("Нет данных по сайтам.")
+
+    users = {}
+    users_with_username = set()
+    for user_id, url, username in all_sites:
+        users.setdefault(user_id, []).append(url)
+        if username:
+            users_with_username.add(user_id)
+
+    user_count = len(users)
+    site_count = len(all_sites)
+    avg_sites = site_count / user_count if user_count else 0
+    max_sites = max(len(sites) for sites in users.values()) if users else 0
+    users_without_username = user_count - len(users_with_username)
+
+    active_users_14d = len({user_id for _, user_id, _, _ in logs})
+    top_users = sorted(users.items(), key=lambda item: len(item[1]), reverse=True)[:10]
+
+    top_lines = []
+    for idx, (user_id, sites) in enumerate(top_users, start=1):
+        top_lines.append(f"{idx}. {user_id} — {len(sites)} сайтов")
+
+    text = (
+        "📊 Статистика пользователей:\n"
+        f"Пользователей с сайтами: {user_count}\n"
+        f"Всего сайтов: {site_count}\n"
+        f"Среднее сайтов на пользователя: {avg_sites:.2f}\n"
+        f"Максимум сайтов у одного пользователя: {max_sites}\n"
+        f"Пользователей без username: {users_without_username}\n"
+        f"Активных пользователей за 14 дней: {active_users_14d}\n\n"
+        "Топ-10 пользователей по числу сайтов:\n"
+        + ("\n".join(top_lines) if top_lines else "нет данных")
+    )
+    await message.answer(text)
 
 @router.message(F.text == "/status")
 async def admin_status(message: types.Message):
