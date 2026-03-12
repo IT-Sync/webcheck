@@ -444,8 +444,18 @@ async def admin_events(message: types.Message):
     if not events:
         await message.answer("Событий нет за последние 14 дней.")
     else:
-        text = "\n".join([f"{ts}: {url} — {msg}" for ts, url, msg in events])
-        await message.answer(f"События:\n{text}")
+        lines = [f"{ts}: {url} — {msg}" for ts, url, msg in events]
+        max_len = 3500
+        chunk = "События:\n"
+        for line in lines:
+            candidate = f"{chunk}{line}\n"
+            if len(candidate) > max_len:
+                await message.answer(chunk.rstrip())
+                chunk = f"{line}\n"
+            else:
+                chunk = candidate
+        if chunk.strip():
+            await message.answer(chunk.rstrip())
 
 @router.message(F.text == "/logs")
 async def admin_user_logs(message: types.Message):
