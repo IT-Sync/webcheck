@@ -347,22 +347,26 @@ async def admin_user_stats(message: types.Message):
     users = {}
     users_with_username = set()
     for user_id, url, username in all_sites:
-        users.setdefault(user_id, []).append(url)
+        entry = users.setdefault(user_id, {"sites": [], "username": None})
+        entry["sites"].append(url)
+        if username and not entry["username"]:
+            entry["username"] = username
         if username:
             users_with_username.add(user_id)
 
     user_count = len(users)
     site_count = len(all_sites)
     avg_sites = site_count / user_count if user_count else 0
-    max_sites = max(len(sites) for sites in users.values()) if users else 0
+    max_sites = max(len(data["sites"]) for data in users.values()) if users else 0
     users_without_username = user_count - len(users_with_username)
 
     active_users_14d = len({user_id for _, user_id, _, _ in logs})
-    top_users = sorted(users.items(), key=lambda item: len(item[1]), reverse=True)[:10]
+    top_users = sorted(users.items(), key=lambda item: len(item[1]["sites"]), reverse=True)[:10]
 
     top_lines = []
-    for idx, (user_id, sites) in enumerate(top_users, start=1):
-        top_lines.append(f"{idx}. {user_id} — {len(sites)} сайтов")
+    for idx, (user_id, data) in enumerate(top_users, start=1):
+        username = f" (@{data['username']})" if data["username"] else ""
+        top_lines.append(f"{idx}. {user_id}{username} — {len(data['sites'])} сайтов")
 
     text = (
         "📊 Статистика пользователей:\n"
