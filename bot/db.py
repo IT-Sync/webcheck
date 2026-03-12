@@ -163,7 +163,9 @@ def export_sites_csv():
 def get_site_flags(url):
     c.execute("""
         SELECT notified_http, notified_ssl, notified_domain, 
-               notified_ssl_ts, notified_domain_ts
+               notified_ssl_ts, notified_domain_ts,
+               domain_last_checked, domain_last_days,
+               domain_last_registrar, domain_last_contact_url
         FROM sites WHERE url = %s
     """, (url,))
     row = c.fetchone()
@@ -175,9 +177,24 @@ def get_site_flags(url):
         "domain": bool(row[2]),
         "ssl_ts": row[3],
         "domain_ts": row[4],
+        "domain_check_ts": row[5],
+        "domain_days_cache": row[6],
+        "domain_registrar_cache": row[7],
+        "domain_contact_url_cache": row[8],
     }
 
-def set_site_flags(url, http=UNSET, ssl=UNSET, domain=UNSET, ssl_ts=UNSET, domain_ts=UNSET):
+def set_site_flags(
+    url,
+    http=UNSET,
+    ssl=UNSET,
+    domain=UNSET,
+    ssl_ts=UNSET,
+    domain_ts=UNSET,
+    domain_check_ts=UNSET,
+    domain_days_cache=UNSET,
+    domain_registrar_cache=UNSET,
+    domain_contact_url_cache=UNSET,
+):
     updates = []
     values = []
 
@@ -196,6 +213,18 @@ def set_site_flags(url, http=UNSET, ssl=UNSET, domain=UNSET, ssl_ts=UNSET, domai
     if domain_ts is not UNSET:
         updates.append("notified_domain_ts = %s")
         values.append(domain_ts)
+    if domain_check_ts is not UNSET:
+        updates.append("domain_last_checked = %s")
+        values.append(domain_check_ts)
+    if domain_days_cache is not UNSET:
+        updates.append("domain_last_days = %s")
+        values.append(domain_days_cache)
+    if domain_registrar_cache is not UNSET:
+        updates.append("domain_last_registrar = %s")
+        values.append(domain_registrar_cache)
+    if domain_contact_url_cache is not UNSET:
+        updates.append("domain_last_contact_url = %s")
+        values.append(domain_contact_url_cache)
 
     if not updates:
         return
@@ -253,6 +282,26 @@ def migrate_add_notification_flags():
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                            WHERE table_name='sites' AND column_name='notified_domain_ts') THEN
                 ALTER TABLE sites ADD COLUMN notified_domain_ts TIMESTAMP;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='domain_last_checked') THEN
+                ALTER TABLE sites ADD COLUMN domain_last_checked TIMESTAMP;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='domain_last_days') THEN
+                ALTER TABLE sites ADD COLUMN domain_last_days INTEGER;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='domain_last_registrar') THEN
+                ALTER TABLE sites ADD COLUMN domain_last_registrar TEXT;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='domain_last_contact_url') THEN
+                ALTER TABLE sites ADD COLUMN domain_last_contact_url TEXT;
             END IF;
         END
         $$;

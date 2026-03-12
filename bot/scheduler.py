@@ -26,10 +26,6 @@ async def process_site(bot, user_id, url):
     try:
         http_ok = await check_http(url)
         ssl_days = await check_ssl(url)
-        domain_days, registrar, contact_url = await check_domain_expiry(url)
-
-        status = f"{'OK' if http_ok else 'DOWN'}, SSL {ssl_days}d, Domain {domain_days}d"
-        update_site_status(url, status)
 
         flags = get_site_flags(url)
         notified_http = flags.get("http", False)
@@ -37,7 +33,34 @@ async def process_site(bot, user_id, url):
         notified_domain = flags.get("domain", False)
         last_ssl_ts = flags.get("ssl_ts")
         last_domain_ts = flags.get("domain_ts")
+        last_domain_check_ts = flags.get("domain_check_ts")
+        cached_domain_days = flags.get("domain_days_cache")
+        cached_registrar = flags.get("domain_registrar_cache")
+        cached_contact_url = flags.get("domain_contact_url_cache")
         now = datetime.utcnow()
+
+        should_refresh_domain = (
+            last_domain_check_ts is None or
+            (now - last_domain_check_ts).total_seconds() >= 24 * 60 * 60 or
+            cached_domain_days is None
+        )
+
+        if should_refresh_domain:
+            domain_days, registrar, contact_url = await check_domain_expiry(url)
+            set_site_flags(
+                url,
+                domain_check_ts=now,
+                domain_days_cache=domain_days,
+                domain_registrar_cache=registrar,
+                domain_contact_url_cache=contact_url
+            )
+        else:
+            domain_days = cached_domain_days
+            registrar = cached_registrar
+            contact_url = cached_contact_url
+
+        status = f"{'OK' if http_ok else 'DOWN'}, SSL {ssl_days}d, Domain {domain_days}d"
+        update_site_status(url, status)
 
         issues = []
 
