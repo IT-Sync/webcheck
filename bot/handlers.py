@@ -2,6 +2,7 @@ from aiogram import Router, types, F
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from db import (
     add_site, get_sites, delete_site, get_all_sites, get_site_statuses,
+    get_sites_with_pause, get_site_by_url_for_user,
     get_event_logs, log_user_action, get_user_logs,
     get_report_sites, get_event_logs_for_url,
     export_user_logs_csv as export_logs_file,
@@ -9,7 +10,7 @@ from db import (
     update_site_status, update_site_status_by_id, delete_user_data,
     get_site_for_user, get_site_by_id, delete_site_by_id,
     admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
-    set_site_paused_until_by_id, get_site_pause_status
+    set_site_paused_until_by_id
 )
 from monitor import check_http_details, check_ssl, check_domain_expiry, get_geo_info
 from subfinder import find_subdomains, export_subdomains_csv
@@ -176,8 +177,12 @@ async def pause_website(message: types.Message):
 
     updated = set_site_paused(user_id, url, True)
     if updated:
+        site = get_site_by_url_for_user(user_id, url)
         log_user_action(user_id, f"Поставил сайт на паузу: {url}", message.from_user.username)
-        await message.answer(f"⏸ Мониторинг поставлен на паузу: {url}")
+        await message.answer(
+            f"⏸ Мониторинг поставлен на паузу: {url}",
+            reply_markup=build_site_keyboard(url, site[0], paused=True) if site else None
+        )
     else:
         await message.answer("❌ Сайт не найден среди ваших.")
 
@@ -191,8 +196,12 @@ async def resume_website(message: types.Message):
 
     updated = set_site_paused(user_id, url, False)
     if updated:
+        site = get_site_by_url_for_user(user_id, url)
         log_user_action(user_id, f"Возобновил мониторинг сайта: {url}", message.from_user.username)
-        await message.answer(f"▶️ Мониторинг возобновлён: {url}")
+        await message.answer(
+            f"▶️ Мониторинг возобновлён: {url}",
+            reply_markup=build_site_keyboard(url, site[0], paused=False) if site else None
+        )
     else:
         await message.answer("❌ Сайт не найден среди ваших.")
 
@@ -200,12 +209,12 @@ async def resume_website(message: types.Message):
 async def list_websites(message: types.Message):
     user_id = message.from_user.id
     log_user_action(user_id, "/list", message.from_user.username)
-    sites = get_sites(user_id)
+    sites = get_sites_with_pause(user_id)
     if not sites:
         await message.answer("У вас пока нет добавленных сайтов.")
     else:
         for site in sites:
-            paused = get_site_pause_status(site[0])
+            paused = bool(site[6])
             status_text = " ⏸ на паузе" if paused else ""
             await message.answer(
                 f"🔗 {site[3]}{status_text}",
@@ -312,7 +321,8 @@ async def inline_pause_one_hour(query: types.CallbackQuery):
     set_site_paused_until_by_id(site_id, query.from_user.id, paused_until)
     log_user_action(query.from_user.id, f"Пауза 1 час из алерта: {site[3]}", query.from_user.username)
     await query.message.answer(
-        f"⏸ Мониторинг поставлен на паузу до {paused_until.strftime('%H:%M UTC')}: {site[3]}"
+        f"⏸ Мониторинг поставлен на паузу до {paused_until.strftime('%H:%M UTC')}: {site[3]}",
+        reply_markup=build_site_keyboard(site[3], site_id, paused=True)
     )
     await query.answer("Пауза включена")
 
@@ -458,14 +468,14 @@ async def send_status_report(user_id, url, bot, site_id=None):
 async def status_me(message: types.Message):
     log_user_action(message.from_user.id, "/statusme", message.from_user.username)
     args = message.text.split(" ", 1)
-    user_sites = get_sites(message.from_user.id)
+    user_sites = get_sites_with_pause(message.from_user.id)
 
     def format_status(site_row):
         url = site_row[3]
         status = site_row[4] or "Статус ещё не получен."
         checked_at = site_row[5]
         checked_text = checked_at.strftime("%Y-%m-%d %H:%M:%S") if checked_at else "не проверялся"
-        pause_text = "\n⏸ Мониторинг на паузе" if get_site_pause_status(site_row[0]) else ""
+        pause_text = "\n⏸ Мониторинг на паузе" if site_row[6] else ""
         return f"🔗 {url}\n{status}\n🕒 Последняя проверка: {checked_text}{pause_text}"
 
     if len(args) == 2:
@@ -478,7 +488,7 @@ async def status_me(message: types.Message):
         await send_weekly_user_report(message)
 
 async def send_weekly_user_report(message: types.Message):
-    rows = [row for row in get_report_sites() if row["user_id"] == message.from_user.id]
+    rows = get_report_sites(user_id=message.from_user.id)
     for chunk in split_message(format_weekly_user_report(rows)):
         await message.answer(chunk)
 

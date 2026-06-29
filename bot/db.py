@@ -52,12 +52,29 @@ def get_sites(user_id):
     c.execute("SELECT * FROM sites WHERE user_id = %s", (user_id,))
     return c.fetchall()
 
+def get_sites_with_pause(user_id):
+    c.execute(
+        """
+        SELECT id, user_id, username, url, last_status, last_checked,
+               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now
+        FROM sites
+        WHERE user_id = %s
+        ORDER BY id
+        """,
+        (datetime.utcnow(), user_id)
+    )
+    return c.fetchall()
+
 def get_site_by_id(site_id):
     c.execute("SELECT * FROM sites WHERE id = %s", (site_id,))
     return c.fetchone()
 
 def get_site_for_user(site_id, user_id):
     c.execute("SELECT * FROM sites WHERE id = %s AND user_id = %s", (site_id, user_id))
+    return c.fetchone()
+
+def get_site_by_url_for_user(user_id, url):
+    c.execute("SELECT * FROM sites WHERE user_id = %s AND url = %s", (user_id, url))
     return c.fetchone()
 
 def delete_site(user_id, url):
@@ -153,12 +170,19 @@ def get_all_site_checks():
     """, (datetime.utcnow(),))
     return c.fetchall()
 
-def get_report_sites():
-    c.execute("""
-        SELECT id, user_id, username, url, last_status, last_checked, COALESCE(is_paused, FALSE)
+def get_report_sites(user_id=None):
+    params = [datetime.utcnow()]
+    where = ""
+    if user_id is not None:
+        where = "WHERE user_id = %s"
+        params.append(user_id)
+    c.execute(f"""
+        SELECT id, user_id, username, url, last_status, last_checked,
+               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now
         FROM sites
+        {where}
         ORDER BY user_id, id
-    """)
+    """, tuple(params))
     rows = c.fetchall()
     return [
         {
