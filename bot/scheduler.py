@@ -1,6 +1,6 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from db import get_all_sites, update_site_status, log_event, delete_user_sites, log_user_action
-from db import get_site_flags, set_site_flags
+from db import get_all_site_checks, update_site_status_by_id, log_event, delete_user_sites, log_user_action
+from db import get_site_flags_by_id, set_site_flags_by_id
 from monitor import check_http, check_ssl, check_domain_expiry
 from datetime import datetime
 from aiogram.exceptions import TelegramForbiddenError
@@ -12,23 +12,23 @@ MAX_CONCURRENT_CHECKS = int(os.getenv("MAX_CONCURRENT_CHECKS", "30"))
 HTTP_FAILURE_THRESHOLD = int(os.getenv("HTTP_FAILURE_THRESHOLD", "2"))
 
 async def monitor(bot):
-    sites = get_all_sites()
+    sites = get_all_site_checks()
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
     tasks = []
-    for user_id, url in sites:
-        tasks.append(process_site_limited(bot, semaphore, user_id, url))
+    for site_id, user_id, url in sites:
+        tasks.append(process_site_limited(bot, semaphore, site_id, user_id, url))
     await asyncio.gather(*tasks)
 
-async def process_site_limited(bot, semaphore, user_id, url):
+async def process_site_limited(bot, semaphore, site_id, user_id, url):
     async with semaphore:
-        await process_site(bot, user_id, url)
+        await process_site(bot, site_id, user_id, url)
 
-async def process_site(bot, user_id, url):
+async def process_site(bot, site_id, user_id, url):
     try:
         http_ok = await check_http(url)
         ssl_days = await check_ssl(url)
 
-        flags = get_site_flags(url)
+        flags = get_site_flags_by_id(site_id)
         notified_http = flags.get("http", False)
         notified_ssl = flags.get("ssl", False)
         notified_domain = flags.get("domain", False)
@@ -50,8 +50,8 @@ async def process_site(bot, user_id, url):
 
         if should_refresh_domain:
             domain_days, registrar, contact_url = await check_domain_expiry(url)
-            set_site_flags(
-                url,
+            set_site_flags_by_id(
+                site_id,
                 domain_check_ts=now,
                 domain_days_cache=domain_days,
                 domain_registrar_cache=registrar,
@@ -63,7 +63,7 @@ async def process_site(bot, user_id, url):
             contact_url = cached_contact_url
 
         status = f"{'OK' if http_ok else 'DOWN'}, SSL {ssl_days}d, Domain {domain_days}d"
-        update_site_status(url, status)
+        update_site_status_by_id(site_id, status)
 
         issues = []
 
@@ -73,9 +73,9 @@ async def process_site(bot, user_id, url):
             if not notified_http and new_fail_count >= HTTP_FAILURE_THRESHOLD:
                 issues.append("❌ Сайт недоступен")
                 log_event(url, f"Сайт недоступен ({new_fail_count} подряд провалов)")
-                set_site_flags(url, http=True, http_fail_count=new_fail_count)
+                set_site_flags_by_id(site_id, http=True, http_fail_count=new_fail_count)
             else:
-                set_site_flags(url, http_fail_count=new_fail_count)
+                set_site_flags_by_id(site_id, http_fail_count=new_fail_count)
         elif http_ok and notified_http:
             try:
                 await bot.send_message(user_id, f"✅ Сайт снова доступен: {url}")
@@ -83,17 +83,17 @@ async def process_site(bot, user_id, url):
                 await notify_block(bot, user_id, url)
                 return
             log_event(url, "Сайт восстановился")
-            set_site_flags(url, http=False, http_fail_count=0)
+            set_site_flags_by_id(site_id, http=False, http_fail_count=0)
         else:
             if http_fail_count:
-                set_site_flags(url, http_fail_count=0)
+                set_site_flags_by_id(site_id, http_fail_count=0)
 
         # SSL
         if 0 <= ssl_days <= 14:
             if (not notified_ssl) or (not last_ssl_ts or (now - last_ssl_ts).days >= 1):
                 issues.append(f"⚠️ SSL истекает через {ssl_days} дней")
                 log_event(url, f"Сертификат истекает через {ssl_days} дней")
-                set_site_flags(url, ssl=True, ssl_ts=now)
+                set_site_flags_by_id(site_id, ssl=True, ssl_ts=now)
         else:
             if notified_ssl:
                 try:
@@ -102,14 +102,14 @@ async def process_site(bot, user_id, url):
                     await notify_block(bot, user_id, url)
                     return
                 log_event(url, f"SSL продлён ({ssl_days} дней)")
-                set_site_flags(url, ssl=False, ssl_ts=None)
+                set_site_flags_by_id(site_id, ssl=False, ssl_ts=None)
 
         # Domain
         if 0 <= domain_days <= 14:
             if (not notified_domain) or (not last_domain_ts or (now - last_domain_ts).days >= 1):
                 issues.append(f"⚠️ Домен истекает через {domain_days} дней")
                 log_event(url, f"Домен истекает через {domain_days} дней")
-                set_site_flags(url, domain=True, domain_ts=now)
+                set_site_flags_by_id(site_id, domain=True, domain_ts=now)
         else:
             if notified_domain:
                 try:
@@ -118,7 +118,7 @@ async def process_site(bot, user_id, url):
                     await notify_block(bot, user_id, url)
                     return
                 log_event(url, f"Домен продлён ({domain_days} дней)")
-                set_site_flags(url, domain=False, domain_ts=None)
+                set_site_flags_by_id(site_id, domain=False, domain_ts=None)
 
         if issues:
             text = f"🔗 {url}\n" + "\n".join(issues)

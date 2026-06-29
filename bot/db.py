@@ -43,15 +43,56 @@ conn.commit()
 
 # Методы
 def add_site(user_id, url, username=None):
-    c.execute("INSERT INTO sites (user_id, username, url) VALUES (%s, %s, %s)", (user_id, username, url))
+    c.execute("INSERT INTO sites (user_id, username, url) VALUES (%s, %s, %s) RETURNING id", (user_id, username, url))
+    site_id = c.fetchone()[0]
     conn.commit()
+    return site_id
 
 def get_sites(user_id):
     c.execute("SELECT * FROM sites WHERE user_id = %s", (user_id,))
     return c.fetchall()
 
+def get_site_by_id(site_id):
+    c.execute("SELECT * FROM sites WHERE id = %s", (site_id,))
+    return c.fetchone()
+
+def get_site_for_user(site_id, user_id):
+    c.execute("SELECT * FROM sites WHERE id = %s AND user_id = %s", (site_id, user_id))
+    return c.fetchone()
+
 def delete_site(user_id, url):
     c.execute("DELETE FROM sites WHERE user_id = %s AND url = %s", (user_id, url))
+    conn.commit()
+    return c.rowcount > 0
+
+def delete_site_by_id(site_id, user_id):
+    c.execute("DELETE FROM sites WHERE id = %s AND user_id = %s", (site_id, user_id))
+    conn.commit()
+    return c.rowcount > 0
+
+def set_site_paused_by_id(site_id, user_id, paused):
+    c.execute(
+        "UPDATE sites SET is_paused = %s WHERE id = %s AND user_id = %s",
+        (paused, site_id, user_id)
+    )
+    conn.commit()
+    return c.rowcount > 0
+
+def set_site_paused(user_id, url, paused):
+    c.execute(
+        "UPDATE sites SET is_paused = %s WHERE user_id = %s AND url = %s",
+        (paused, user_id, url)
+    )
+    conn.commit()
+    return c.rowcount > 0
+
+def get_site_pause_status(site_id):
+    c.execute("SELECT is_paused FROM sites WHERE id = %s", (site_id,))
+    row = c.fetchone()
+    return bool(row[0]) if row else False
+
+def admin_delete_site_by_id(site_id):
+    c.execute("DELETE FROM sites WHERE id = %s", (site_id,))
     conn.commit()
     return c.rowcount > 0
 
@@ -73,13 +114,24 @@ def delete_user_data(user_id):
 
 def get_all_sites(full=False):
     if full:
-        c.execute("SELECT user_id, url, username FROM sites")
+        c.execute("SELECT user_id, url, username FROM sites ORDER BY user_id, id")
     else:
-        c.execute("SELECT DISTINCT user_id, url FROM sites")
+        c.execute("SELECT DISTINCT user_id, url FROM sites ORDER BY user_id, url")
+    return c.fetchall()
+
+def get_all_site_checks():
+    c.execute("SELECT id, user_id, url FROM sites WHERE COALESCE(is_paused, FALSE) = FALSE ORDER BY id")
     return c.fetchall()
 
 def update_site_status(url, status):
     c.execute("UPDATE sites SET last_status = %s, last_checked = %s WHERE url = %s", (status, datetime.utcnow(), url))
+    conn.commit()
+
+def update_site_status_by_id(site_id, status):
+    c.execute(
+        "UPDATE sites SET last_status = %s, last_checked = %s WHERE id = %s",
+        (status, datetime.utcnow(), site_id)
+    )
     conn.commit()
 
 def get_site_statuses():
@@ -185,6 +237,31 @@ def get_site_flags(url):
         "http_fail_count": row[9] or 0,
     }
 
+def get_site_flags_by_id(site_id):
+    c.execute("""
+        SELECT notified_http, notified_ssl, notified_domain,
+               notified_ssl_ts, notified_domain_ts,
+               domain_last_checked, domain_last_days,
+               domain_last_registrar, domain_last_contact_url,
+               http_fail_count
+        FROM sites WHERE id = %s
+    """, (site_id,))
+    row = c.fetchone()
+    if not row:
+        return {}
+    return {
+        "http": bool(row[0]),
+        "ssl": bool(row[1]),
+        "domain": bool(row[2]),
+        "ssl_ts": row[3],
+        "domain_ts": row[4],
+        "domain_check_ts": row[5],
+        "domain_days_cache": row[6],
+        "domain_registrar_cache": row[7],
+        "domain_contact_url_cache": row[8],
+        "http_fail_count": row[9] or 0,
+    }
+
 def set_site_flags(
     url,
     http=UNSET,
@@ -237,6 +314,61 @@ def set_site_flags(
 
     values.append(url)
     query = f"UPDATE sites SET {', '.join(updates)} WHERE url = %s"
+    c.execute(query, tuple(values))
+    conn.commit()
+
+def set_site_flags_by_id(
+    site_id,
+    http=UNSET,
+    ssl=UNSET,
+    domain=UNSET,
+    ssl_ts=UNSET,
+    domain_ts=UNSET,
+    domain_check_ts=UNSET,
+    domain_days_cache=UNSET,
+    domain_registrar_cache=UNSET,
+    domain_contact_url_cache=UNSET,
+    http_fail_count=UNSET,
+):
+    updates = []
+    values = []
+
+    if http is not UNSET:
+        updates.append("notified_http = %s")
+        values.append(http)
+    if ssl is not UNSET:
+        updates.append("notified_ssl = %s")
+        values.append(ssl)
+    if domain is not UNSET:
+        updates.append("notified_domain = %s")
+        values.append(domain)
+    if ssl_ts is not UNSET:
+        updates.append("notified_ssl_ts = %s")
+        values.append(ssl_ts)
+    if domain_ts is not UNSET:
+        updates.append("notified_domain_ts = %s")
+        values.append(domain_ts)
+    if domain_check_ts is not UNSET:
+        updates.append("domain_last_checked = %s")
+        values.append(domain_check_ts)
+    if domain_days_cache is not UNSET:
+        updates.append("domain_last_days = %s")
+        values.append(domain_days_cache)
+    if domain_registrar_cache is not UNSET:
+        updates.append("domain_last_registrar = %s")
+        values.append(domain_registrar_cache)
+    if domain_contact_url_cache is not UNSET:
+        updates.append("domain_last_contact_url = %s")
+        values.append(domain_contact_url_cache)
+    if http_fail_count is not UNSET:
+        updates.append("http_fail_count = %s")
+        values.append(http_fail_count)
+
+    if not updates:
+        return
+
+    values.append(site_id)
+    query = f"UPDATE sites SET {', '.join(updates)} WHERE id = %s"
     c.execute(query, tuple(values))
     conn.commit()
 
@@ -314,8 +446,17 @@ def migrate_add_notification_flags():
                            WHERE table_name='sites' AND column_name='http_fail_count') THEN
                 ALTER TABLE sites ADD COLUMN http_fail_count INTEGER DEFAULT 0;
             END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='is_paused') THEN
+                ALTER TABLE sites ADD COLUMN is_paused BOOLEAN DEFAULT FALSE;
+            END IF;
         END
         $$;
     """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sites_user_id ON sites(user_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sites_url ON sites(url)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_user_logs_created_at ON user_logs(created_at)")
 
     conn.commit()

@@ -5,10 +5,18 @@ from db import (
     get_event_logs, log_user_action, get_user_logs,
     export_user_logs_csv as export_logs_file,
     export_sites_csv as export_sites_file,
-    admin_delete_site, update_site_status, delete_user_data
+    update_site_status, update_site_status_by_id, delete_user_data,
+    get_site_for_user, get_site_by_id, delete_site_by_id,
+    admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
+    get_site_pause_status
 )
 from monitor import check_http, check_ssl, check_domain_expiry, get_geo_info
 from subfinder import find_subdomains, export_subdomains_csv
+from callback_data import (
+    admin_delete_callback, site_delete_callback, site_pause_callback,
+    site_resume_callback, site_status_callback
+)
+from url_utils import normalize_url
 import os
 import asyncio
 import socket
@@ -29,14 +37,6 @@ ADMIN_COMMANDS_TEXT = (
     "/remove_user <user_id> — удалить сайты и логи пользователя"
 )
 
-def normalize_url(url: str) -> str:
-    url = url.strip().lower()
-    if not url.startswith("http"):
-        url = "https://" + url
-    url = url.replace("www.", "")
-    parsed = urlparse(url)
-    return f"https://{parsed.hostname}" if parsed.hostname else url
-
 def is_domain_resolvable(domain: str) -> bool:
     try:
         socket.gethostbyname(domain)
@@ -44,10 +44,18 @@ def is_domain_resolvable(domain: str) -> bool:
     except socket.error:
         return False
 
-def build_site_keyboard(url):
+def build_site_keyboard(url, site_id=None, paused=False):
     kb = InlineKeyboardBuilder()
-    kb.button(text="📊 Статус", callback_data=f"status:{url}")
-    kb.button(text="🗑 Удалить", callback_data=f"delete:{url}")
+    if site_id:
+        kb.button(text="📊 Статус", callback_data=site_status_callback(site_id))
+        if paused:
+            kb.button(text="▶️ Возобновить", callback_data=site_resume_callback(site_id))
+        else:
+            kb.button(text="⏸ Пауза", callback_data=site_pause_callback(site_id))
+        kb.button(text="🗑 Удалить", callback_data=site_delete_callback(site_id))
+    else:
+        kb.button(text="📊 Статус", callback_data=f"status:{url}")
+        kb.button(text="🗑 Удалить", callback_data=f"delete:{url}")
     return kb.as_markup()
 
 async def process_site_input(user_id, username, url, bot):
@@ -68,14 +76,14 @@ async def process_site_input(user_id, username, url, bot):
         await bot.send_message(user_id, "⚠️ Этот сайт уже добавлен.")
         return
 
-    add_site(user_id, url, username)
+    site_id = add_site(user_id, url, username)
     log_user_action(user_id, f"Добавил сайт: {url}", username)
     # 👇 Добавляем GeoIP-проверку
     geo_info = await get_geo_info(url)
     await bot.send_message(user_id, geo_info)
     
     await bot.send_message(user_id, f"✅ Добавлен сайт: {url}\nПроверяю...")
-    await send_status_report(user_id, url, bot)
+    await send_status_report(user_id, url, bot, site_id=site_id)
 
 @router.message(F.text == "/start")
 async def cmd_start(message: types.Message):
@@ -87,6 +95,8 @@ async def cmd_start(message: types.Message):
         "📋 Команды:\n"
         "/list — Мои сайты\n"
         "/delete <URL> — Удалить сайт\n"
+        "/pause <URL> — Поставить мониторинг на паузу\n"
+        "/resume <URL> — Возобновить мониторинг\n"
         "/statusme — Статус всех сайтов\n"
         "/statusme <URL> — Статус одного сайта\n"
         "/subdomains <домен> — Поиск поддоменов\n\n"
@@ -108,6 +118,8 @@ async def cmd_help(message: types.Message):
         "📋 <b>Доступные команды:</b>\n"
         "/list — Показать ваши добавленные сайты\n"
         "/delete &lt;URL&gt; — Удалить сайт из мониторинга\n"
+        "/pause &lt;URL&gt; — Поставить мониторинг сайта на паузу\n"
+        "/resume &lt;URL&gt; — Возобновить мониторинг сайта\n"
         "/statusme — Проверить статус всех ваших сайтов\n"
         "/statusme &lt;URL&gt; — Проверить статус конкретного сайта\n"
         "/subdomains &lt;домен&gt; — Найти поддомены \n\n"
@@ -136,6 +148,36 @@ async def delete_website(message: types.Message):
     except IndexError:
         await message.answer("Используйте: /delete <URL>")
 
+@router.message(F.text.startswith("/pause"))
+async def pause_website(message: types.Message):
+    user_id = message.from_user.id
+    try:
+        url = normalize_url(message.text.split(" ", 1)[1].strip())
+    except IndexError:
+        return await message.answer("Используйте: /pause <URL>")
+
+    updated = set_site_paused(user_id, url, True)
+    if updated:
+        log_user_action(user_id, f"Поставил сайт на паузу: {url}", message.from_user.username)
+        await message.answer(f"⏸ Мониторинг поставлен на паузу: {url}")
+    else:
+        await message.answer("❌ Сайт не найден среди ваших.")
+
+@router.message(F.text.startswith("/resume"))
+async def resume_website(message: types.Message):
+    user_id = message.from_user.id
+    try:
+        url = normalize_url(message.text.split(" ", 1)[1].strip())
+    except IndexError:
+        return await message.answer("Используйте: /resume <URL>")
+
+    updated = set_site_paused(user_id, url, False)
+    if updated:
+        log_user_action(user_id, f"Возобновил мониторинг сайта: {url}", message.from_user.username)
+        await message.answer(f"▶️ Мониторинг возобновлён: {url}")
+    else:
+        await message.answer("❌ Сайт не найден среди ваших.")
+
 @router.message(F.text == "/list")
 async def list_websites(message: types.Message):
     user_id = message.from_user.id
@@ -145,16 +187,83 @@ async def list_websites(message: types.Message):
         await message.answer("У вас пока нет добавленных сайтов.")
     else:
         for site in sites:
+            paused = get_site_pause_status(site[0])
+            status_text = " ⏸ на паузе" if paused else ""
             await message.answer(
-                f"🔗 {site[3]}",
-                reply_markup=build_site_keyboard(site[3])
+                f"🔗 {site[3]}{status_text}",
+                reply_markup=build_site_keyboard(site[3], site[0], paused=paused)
             )
+
+@router.callback_query(F.data.startswith("st:"))
+async def inline_status_by_id(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    await query.answer("Проверяю...")
+    asyncio.create_task(send_status_report(query.from_user.id, site[3], query.message.bot, site_id=site_id))
 
 @router.callback_query(F.data.startswith("status:"))
 async def inline_status(query: types.CallbackQuery):
     url = normalize_url(query.data.split(":", 1)[1])
     await query.answer("Проверяю...")
     asyncio.create_task(send_status_report(query.from_user.id, url, query.message.bot))
+
+@router.callback_query(F.data.startswith("del:"))
+async def inline_delete_by_id(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    deleted = delete_site_by_id(site_id, query.from_user.id)
+    log_user_action(query.from_user.id, f"Удалил сайт (inline): {site[3]}", query.from_user.username)
+    if deleted:
+        await query.message.answer(f"🗑 Удалён сайт: {site[3]}")
+    else:
+        await query.message.answer("❌ Сайт не найден среди ваших.")
+    await query.answer("Удалено.")
+
+@router.callback_query(F.data.startswith("pause:"))
+async def inline_pause_by_id(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    set_site_paused_by_id(site_id, query.from_user.id, True)
+    log_user_action(query.from_user.id, f"Поставил сайт на паузу (inline): {site[3]}", query.from_user.username)
+    await query.message.answer(f"⏸ Мониторинг поставлен на паузу: {site[3]}")
+    await query.answer("На паузе")
+
+@router.callback_query(F.data.startswith("resume:"))
+async def inline_resume_by_id(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    set_site_paused_by_id(site_id, query.from_user.id, False)
+    log_user_action(query.from_user.id, f"Возобновил мониторинг сайта (inline): {site[3]}", query.from_user.username)
+    await query.message.answer(f"▶️ Мониторинг возобновлён: {site[3]}")
+    await query.answer("Возобновлено")
 
 @router.callback_query(F.data.startswith("delete:"))
 async def inline_delete(query: types.CallbackQuery):
@@ -194,6 +303,27 @@ async def admin_delete_site_for_user(query: types.CallbackQuery):
         await query.message.answer(f"⚠️ Сайт {url} не найден у пользователя {user_id}")
     await query.answer("Удалено.")
 
+@router.callback_query(F.data.startswith("ad:"))
+async def admin_delete_site_by_site_id(query: types.CallbackQuery):
+    if query.from_user.id != BOT_OWNER_ID:
+        return await query.answer("⛔ Нет доступа", show_alert=True)
+
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверный формат данных", show_alert=True)
+
+    site = get_site_by_id(site_id)
+    if not site:
+        return await query.answer("Сайт уже удалён", show_alert=True)
+
+    deleted = admin_delete_site_by_id(site_id)
+    if deleted:
+        await query.message.answer(f"🗑 Сайт {site[3]} удалён у пользователя {site[1]}")
+    else:
+        await query.message.answer(f"⚠️ Сайт {site[3]} не найден")
+    await query.answer("Удалено.")
+
 @router.callback_query(F.data.startswith("adminuser:"))
 async def admin_user_details(query: types.CallbackQuery):
     if query.from_user.id != BOT_OWNER_ID:
@@ -226,7 +356,7 @@ async def admin_user_details(query: types.CallbackQuery):
         for idx, site in enumerate(chunk, start=start + 1):
             url = site[3]
             lines.append(f"{idx}. {url}")
-            kb.button(text=f"🗑 {idx}", callback_data=f"admindelete:{user_id}:{url}")
+            kb.button(text=f"🗑 {idx}", callback_data=admin_delete_callback(site[0]))
         kb.adjust(2)
 
         header = f"Пользователь {user_id}"
@@ -239,13 +369,16 @@ async def admin_user_details(query: types.CallbackQuery):
     await query.answer("Отправлено")
 
 
-async def send_status_report(user_id, url, bot):
+async def send_status_report(user_id, url, bot, site_id=None):
     http_ok = await check_http(url)
     ssl_days = await check_ssl(url)
     domain_days, registrar, contact_url = await check_domain_expiry(url)
 
     status_str = f"{'OK' if http_ok else 'DOWN'}, SSL {ssl_days}d, Domain {domain_days}d"
-    update_site_status(url, status_str)
+    if site_id:
+        update_site_status_by_id(site_id, status_str)
+    else:
+        update_site_status(url, status_str)
 
     text = f"🔗 {url}\n"
     text += "✅ Сайт доступен\n" if http_ok else "❌ Сайт недоступен\n"
@@ -277,7 +410,8 @@ async def status_me(message: types.Message):
         status = site_row[4] or "Статус ещё не получен."
         checked_at = site_row[5]
         checked_text = checked_at.strftime("%Y-%m-%d %H:%M:%S") if checked_at else "не проверялся"
-        return f"🔗 {url}\n{status}\n🕒 Последняя проверка: {checked_text}"
+        pause_text = "\n⏸ Мониторинг на паузе" if get_site_pause_status(site_row[0]) else ""
+        return f"🔗 {url}\n{status}\n🕒 Последняя проверка: {checked_text}{pause_text}"
 
     if len(args) == 2:
         url = normalize_url(args[1].strip())
