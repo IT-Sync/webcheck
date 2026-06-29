@@ -3,23 +3,30 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from db import (
     add_site, get_sites, delete_site, get_all_sites, get_site_statuses,
     get_event_logs, log_user_action, get_user_logs,
+    get_report_sites, get_event_logs_for_url,
     export_user_logs_csv as export_logs_file,
     export_sites_csv as export_sites_file,
     update_site_status, update_site_status_by_id, delete_user_data,
     get_site_for_user, get_site_by_id, delete_site_by_id,
     admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
-    get_site_pause_status
+    set_site_paused_until_by_id, get_site_pause_status
 )
-from monitor import check_http, check_ssl, check_domain_expiry, get_geo_info
+from monitor import check_http_details, check_ssl, check_domain_expiry, get_geo_info
 from subfinder import find_subdomains, export_subdomains_csv
 from callback_data import (
     admin_delete_callback, site_delete_callback, site_pause_callback,
-    site_resume_callback, site_status_callback
+    site_resume_callback, site_status_callback, site_check_now_callback,
+    site_history_callback, site_pause_1h_callback
+)
+from status_formatter import (
+    format_status_text, format_user_status_message, format_weekly_user_report,
+    split_message
 )
 from url_utils import normalize_url
 import os
 import asyncio
 import socket
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 router = Router()
@@ -34,6 +41,7 @@ ADMIN_COMMANDS_TEXT = (
     "/logs — действия пользователей за 14 дней\n"
     "/export_logs — экспорт логов CSV\n"
     "/export_sites — экспорт сайтов CSV\n"
+    "/weekly_all — еженедельный отчёт по всем ресурсам\n"
     "/remove_user <user_id> — удалить сайты и логи пользователя"
 )
 
@@ -56,6 +64,14 @@ def build_site_keyboard(url, site_id=None, paused=False):
     else:
         kb.button(text="📊 Статус", callback_data=f"status:{url}")
         kb.button(text="🗑 Удалить", callback_data=f"delete:{url}")
+    return kb.as_markup()
+
+def build_incident_keyboard(site_id):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Проверить сейчас", callback_data=site_check_now_callback(site_id))
+    kb.button(text="Пауза 1 час", callback_data=site_pause_1h_callback(site_id))
+    kb.button(text="Открыть историю", callback_data=site_history_callback(site_id))
+    kb.adjust(1)
     return kb.as_markup()
 
 async def process_site_input(user_id, username, url, bot):
@@ -97,8 +113,9 @@ async def cmd_start(message: types.Message):
         "/delete <URL> — Удалить сайт\n"
         "/pause <URL> — Поставить мониторинг на паузу\n"
         "/resume <URL> — Возобновить мониторинг\n"
-        "/statusme — Статус всех сайтов\n"
+        "/statusme — Сводный отчёт по вашим ресурсам\n"
         "/statusme <URL> — Статус одного сайта\n"
+        "/weekly — То же, что /statusme\n"
         "/subdomains <домен> — Поиск поддоменов\n\n"
         "🔐 SSL и 🌐 домен также проверяются.\n"
         "_Поддомены не проходят проверку домена._\n\n"
@@ -120,8 +137,9 @@ async def cmd_help(message: types.Message):
         "/delete &lt;URL&gt; — Удалить сайт из мониторинга\n"
         "/pause &lt;URL&gt; — Поставить мониторинг сайта на паузу\n"
         "/resume &lt;URL&gt; — Возобновить мониторинг сайта\n"
-        "/statusme — Проверить статус всех ваших сайтов\n"
+        "/statusme — Сводный отчёт по вашим ресурсам\n"
         "/statusme &lt;URL&gt; — Проверить статус конкретного сайта\n"
+        "/weekly — То же, что /statusme\n"
         "/subdomains &lt;домен&gt; — Найти поддомены \n\n"
         "🔐 <b>Я проверяю:</b>\n"
         "— доступность сайта (HTTP)\n"
@@ -265,6 +283,59 @@ async def inline_resume_by_id(query: types.CallbackQuery):
     await query.message.answer(f"▶️ Мониторинг возобновлён: {site[3]}")
     await query.answer("Возобновлено")
 
+@router.callback_query(F.data.startswith("chk:"))
+async def inline_check_now(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    await query.answer("Проверяю...")
+    asyncio.create_task(send_status_report(query.from_user.id, site[3], query.message.bot, site_id=site_id))
+
+@router.callback_query(F.data.startswith("p1h:"))
+async def inline_pause_one_hour(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    paused_until = datetime.utcnow() + timedelta(hours=1)
+    set_site_paused_until_by_id(site_id, query.from_user.id, paused_until)
+    log_user_action(query.from_user.id, f"Пауза 1 час из алерта: {site[3]}", query.from_user.username)
+    await query.message.answer(
+        f"⏸ Мониторинг поставлен на паузу до {paused_until.strftime('%H:%M UTC')}: {site[3]}"
+    )
+    await query.answer("Пауза включена")
+
+@router.callback_query(F.data.startswith("hist:"))
+async def inline_site_history(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    events = get_event_logs_for_url(site[3])
+    if not events:
+        await query.message.answer(f"Истории событий за 14 дней нет: {site[3]}")
+        return await query.answer("История пуста")
+
+    lines = [f"{ts}: {msg}" for ts, _, msg in events[:20]]
+    await query.message.answer(f"История {site[3]}:\n" + "\n".join(lines))
+    await query.answer("История открыта")
+
 @router.callback_query(F.data.startswith("delete:"))
 async def inline_delete(query: types.CallbackQuery):
     url = normalize_url(query.data.split(":", 1)[1])
@@ -370,33 +441,17 @@ async def admin_user_details(query: types.CallbackQuery):
 
 
 async def send_status_report(user_id, url, bot, site_id=None):
-    http_ok = await check_http(url)
+    http_details = await check_http_details(url)
     ssl_days = await check_ssl(url)
     domain_days, registrar, contact_url = await check_domain_expiry(url)
 
-    status_str = f"{'OK' if http_ok else 'DOWN'}, SSL {ssl_days}d, Domain {domain_days}d"
+    status_str = format_status_text(http_details, ssl_days, domain_days, registrar, contact_url)
     if site_id:
         update_site_status_by_id(site_id, status_str)
     else:
         update_site_status(url, status_str)
 
-    text = f"🔗 {url}\n"
-    text += "✅ Сайт доступен\n" if http_ok else "❌ Сайт недоступен\n"
-    text += f"🔐 SSL: {ssl_days} дней до истечения\n" if ssl_days >= 0 else "⚠️ SSL не проверен\n"
-
-    if domain_days == -2:
-        text += "🌐 Домен: 🔒 Проверка недоступна для поддоменов"
-    else:
-        if domain_days >= 0:
-            text += f"🌐 Домен: {domain_days} дней до окончания\n"
-        else:
-            text += "⚠️ Домен не проверен\n"
-
-        if registrar:
-            text += f"🏢 Регистратор: {registrar}\n"
-        if contact_url:
-            text += f"🔗 Сайт регистратора: {contact_url}"
-
+    text = format_user_status_message(url, http_details, ssl_days, domain_days, registrar, contact_url)
     await bot.send_message(user_id, text)
 
 @router.message(F.text.startswith("/statusme"))
@@ -420,10 +475,17 @@ async def status_me(message: types.Message):
             return await message.answer("❌ Этот сайт не найден среди ваших.")
         await message.answer(format_status(site))
     else:
-        if not user_sites:
-            return await message.answer("У вас нет сайтов.")
-        for site in user_sites:
-            await message.answer(format_status(site))
+        await send_weekly_user_report(message)
+
+async def send_weekly_user_report(message: types.Message):
+    rows = [row for row in get_report_sites() if row["user_id"] == message.from_user.id]
+    for chunk in split_message(format_weekly_user_report(rows)):
+        await message.answer(chunk)
+
+@router.message(F.text == "/weekly")
+async def weekly_user_report(message: types.Message):
+    log_user_action(message.from_user.id, "/weekly", message.from_user.username)
+    await send_weekly_user_report(message)
 
 @router.message(F.text == "/admin")
 async def admin_overview(message: types.Message):
@@ -514,6 +576,18 @@ async def admin_user_stats(message: types.Message):
         + ("\n".join(top_lines) if top_lines else "нет данных")
     )
     await message.answer(text)
+
+@router.message(F.text == "/weekly_all")
+async def weekly_admin_report(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+    log_user_action(message.from_user.id, "/weekly_all", message.from_user.username)
+    report = format_weekly_user_report(
+        get_report_sites(),
+        title="📅 Еженедельный админ-отчёт по всем ресурсам"
+    )
+    for chunk in split_message(report):
+        await message.answer(chunk)
 
 @router.message(F.text == "/status")
 async def admin_status(message: types.Message):

@@ -71,25 +71,48 @@ def delete_site_by_id(site_id, user_id):
     return c.rowcount > 0
 
 def set_site_paused_by_id(site_id, user_id, paused):
+    if paused:
+        c.execute(
+            "UPDATE sites SET is_paused = %s WHERE id = %s AND user_id = %s",
+            (paused, site_id, user_id)
+        )
+    else:
+        c.execute(
+            "UPDATE sites SET is_paused = %s, paused_until = NULL WHERE id = %s AND user_id = %s",
+            (paused, site_id, user_id)
+        )
+    conn.commit()
+    return c.rowcount > 0
+
+def set_site_paused_until_by_id(site_id, user_id, paused_until):
     c.execute(
-        "UPDATE sites SET is_paused = %s WHERE id = %s AND user_id = %s",
-        (paused, site_id, user_id)
+        "UPDATE sites SET paused_until = %s WHERE id = %s AND user_id = %s",
+        (paused_until, site_id, user_id)
     )
     conn.commit()
     return c.rowcount > 0
 
 def set_site_paused(user_id, url, paused):
-    c.execute(
-        "UPDATE sites SET is_paused = %s WHERE user_id = %s AND url = %s",
-        (paused, user_id, url)
-    )
+    if paused:
+        c.execute(
+            "UPDATE sites SET is_paused = %s WHERE user_id = %s AND url = %s",
+            (paused, user_id, url)
+        )
+    else:
+        c.execute(
+            "UPDATE sites SET is_paused = %s, paused_until = NULL WHERE user_id = %s AND url = %s",
+            (paused, user_id, url)
+        )
     conn.commit()
     return c.rowcount > 0
 
 def get_site_pause_status(site_id):
-    c.execute("SELECT is_paused FROM sites WHERE id = %s", (site_id,))
+    c.execute("SELECT is_paused, paused_until FROM sites WHERE id = %s", (site_id,))
     row = c.fetchone()
-    return bool(row[0]) if row else False
+    if not row:
+        return False
+    paused_until = row[1]
+    return bool(row[0]) or (paused_until is not None and paused_until > datetime.utcnow())
 
 def admin_delete_site_by_id(site_id):
     c.execute("DELETE FROM sites WHERE id = %s", (site_id,))
@@ -120,8 +143,35 @@ def get_all_sites(full=False):
     return c.fetchall()
 
 def get_all_site_checks():
-    c.execute("SELECT id, user_id, url FROM sites WHERE COALESCE(is_paused, FALSE) = FALSE ORDER BY id")
+    c.execute("""
+        SELECT id, user_id, url, incident_started_at, last_success_at,
+               last_success_http_status, last_success_latency_ms, last_resolved_ip
+        FROM sites
+        WHERE COALESCE(is_paused, FALSE) = FALSE
+          AND (paused_until IS NULL OR paused_until <= %s)
+        ORDER BY id
+    """, (datetime.utcnow(),))
     return c.fetchall()
+
+def get_report_sites():
+    c.execute("""
+        SELECT id, user_id, username, url, last_status, last_checked, COALESCE(is_paused, FALSE)
+        FROM sites
+        ORDER BY user_id, id
+    """)
+    rows = c.fetchall()
+    return [
+        {
+            "id": row[0],
+            "user_id": row[1],
+            "username": row[2],
+            "url": row[3],
+            "last_status": row[4],
+            "last_checked": row[5],
+            "is_paused": row[6],
+        }
+        for row in rows
+    ]
 
 def update_site_status(url, status):
     c.execute("UPDATE sites SET last_status = %s, last_checked = %s WHERE url = %s", (status, datetime.utcnow(), url))
@@ -132,6 +182,39 @@ def update_site_status_by_id(site_id, status):
         "UPDATE sites SET last_status = %s, last_checked = %s WHERE id = %s",
         (status, datetime.utcnow(), site_id)
     )
+    conn.commit()
+
+def update_site_success(site_id, http_status=None, latency_ms=None, resolved_ip=None):
+    c.execute(
+        """
+        UPDATE sites
+        SET last_success_at = %s,
+            last_success_http_status = %s,
+            last_success_latency_ms = %s,
+            last_resolved_ip = COALESCE(%s, last_resolved_ip)
+        WHERE id = %s
+        """,
+        (datetime.utcnow(), http_status, latency_ms, resolved_ip, site_id)
+    )
+    conn.commit()
+
+def start_site_incident(site_id, started_at, resolved_ip=None):
+    c.execute(
+        """
+        UPDATE sites
+        SET incident_started_at = COALESCE(incident_started_at, %s),
+            last_resolved_ip = COALESCE(%s, last_resolved_ip)
+        WHERE id = %s
+        RETURNING incident_started_at
+        """,
+        (started_at, resolved_ip, site_id)
+    )
+    row = c.fetchone()
+    conn.commit()
+    return row[0] if row else started_at
+
+def clear_site_incident(site_id):
+    c.execute("UPDATE sites SET incident_started_at = NULL WHERE id = %s", (site_id,))
     conn.commit()
 
 def get_site_statuses():
@@ -145,6 +228,14 @@ def log_event(url, message):
 def get_event_logs():
     since = datetime.utcnow() - timedelta(days=14)
     c.execute("SELECT created_at, url, message FROM events WHERE created_at > %s ORDER BY created_at DESC", (since,))
+    return c.fetchall()
+
+def get_event_logs_for_url(url):
+    since = datetime.utcnow() - timedelta(days=14)
+    c.execute(
+        "SELECT created_at, url, message FROM events WHERE created_at > %s AND url = %s ORDER BY created_at DESC",
+        (since, url)
+    )
     return c.fetchall()
 
 #def admin_delete_site(url):
@@ -450,6 +541,36 @@ def migrate_add_notification_flags():
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                            WHERE table_name='sites' AND column_name='is_paused') THEN
                 ALTER TABLE sites ADD COLUMN is_paused BOOLEAN DEFAULT FALSE;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='paused_until') THEN
+                ALTER TABLE sites ADD COLUMN paused_until TIMESTAMP;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='incident_started_at') THEN
+                ALTER TABLE sites ADD COLUMN incident_started_at TIMESTAMP;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='last_success_at') THEN
+                ALTER TABLE sites ADD COLUMN last_success_at TIMESTAMP;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='last_success_http_status') THEN
+                ALTER TABLE sites ADD COLUMN last_success_http_status INTEGER;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='last_success_latency_ms') THEN
+                ALTER TABLE sites ADD COLUMN last_success_latency_ms INTEGER;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='last_resolved_ip') THEN
+                ALTER TABLE sites ADD COLUMN last_resolved_ip TEXT;
             END IF;
         END
         $$;

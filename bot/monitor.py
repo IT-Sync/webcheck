@@ -3,12 +3,22 @@ import ssl
 import socket
 import asyncio
 import re
-import json
 import os
-from ipwhois import IPWhois
+import time
 from datetime import datetime, timezone
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
+from urllib.parse import urlparse
+
+
+def resolve_hostname(url):
+    hostname = urlparse(url).hostname
+    if not hostname:
+        return None
+    try:
+        return socket.gethostbyname(hostname)
+    except socket.error:
+        return None
 
 #async def check_http(url):
 #    try:
@@ -34,7 +44,7 @@ from cryptography.hazmat.backends import default_backend
 #
 #    return False
 
-async def check_http(url, retries=3, delay=5):
+async def check_http_details(url, retries=3, delay=5):
     timeout = aiohttp.ClientTimeout(total=12)
     headers = {
         "User-Agent": (
@@ -49,11 +59,14 @@ async def check_http(url, retries=3, delay=5):
     }
 
     allow_http_fallback = os.getenv("HTTP_ALLOW_PLAIN_FALLBACK", "1") == "1"
+    resolved_ip = resolve_hostname(url)
     urls_to_try = [url]
     if allow_http_fallback and url.startswith("https://"):
         urls_to_try.append("http://" + url[len("https://"):])
 
     connector = aiohttp.TCPConnector(ssl=False, limit=10)
+    last_error = None
+    attempts = 0
     async with aiohttp.ClientSession(
         timeout=timeout,
         headers=headers,
@@ -64,26 +77,63 @@ async def check_http(url, retries=3, delay=5):
             for current_url in urls_to_try:
                 try:
                     for method in ("HEAD", "GET"):
+                        attempts += 1
+                        started = time.monotonic()
                         async with session.request(method, current_url, allow_redirects=False) as resp:
+                            latency_ms = int((time.monotonic() - started) * 1000)
                             print(f"[Attempt {attempt}] {method} {resp.status} for {current_url}")
                             # 4xx означает, что сервер отвечает, но может блокировать ботов/доступ.
                             # Для мониторинга доступности это считаем "сайт жив".
                             if 200 <= resp.status < 500:
-                                return True
+                                return {
+                                    "ok": True,
+                                    "status_code": resp.status,
+                                    "method": method,
+                                    "url": current_url,
+                                    "latency_ms": latency_ms,
+                                    "attempts": attempts,
+                                    "error": None,
+                                    "ip": resolved_ip,
+                                }
 
                             # Если HEAD не дал положительный ответ, пробуем GET.
                             if method == "HEAD":
                                 continue
+                            last_error = f"HTTP {resp.status}"
                             break
                 except Exception as e:
                     error_text = str(e)
                     if "Header value is too long" in error_text:
-                        return True
+                        return {
+                            "ok": True,
+                            "status_code": None,
+                            "method": method,
+                            "url": current_url,
+                            "latency_ms": None,
+                            "attempts": attempts,
+                            "error": "Header value is too long",
+                            "ip": resolved_ip,
+                        }
+                    last_error = error_text or type(e).__name__
                     print(f"[Attempt {attempt}] Error checking {current_url}: {error_text or type(e).__name__}")
 
             await asyncio.sleep(delay * attempt)
 
-    return False
+    return {
+        "ok": False,
+        "status_code": None,
+        "method": None,
+        "url": urls_to_try[-1],
+        "latency_ms": None,
+        "attempts": attempts,
+        "error": last_error or "No successful HTTP response",
+        "ip": resolved_ip,
+    }
+
+
+async def check_http(url, retries=3, delay=5):
+    details = await check_http_details(url, retries=retries, delay=delay)
+    return details["ok"]
 
 
 async def check_ssl(url):
