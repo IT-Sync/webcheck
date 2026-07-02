@@ -322,11 +322,11 @@ def get_admin_command_stats(days=14, limit=12):
                COUNT(DISTINCT user_id) AS users
         FROM user_logs
         WHERE created_at > %s
-          AND action LIKE '/%'
+          AND action LIKE %s
         GROUP BY command
         ORDER BY total DESC, command
         LIMIT %s
-    """, (datetime.utcnow() - timedelta(days=days), limit))
+    """, (datetime.utcnow() - timedelta(days=days), "/%", limit))
     return [
         {
             "command": row[0],
