@@ -703,10 +703,18 @@ async def admin_events(message: types.Message):
 async def admin_user_logs(message: types.Message):
     if message.from_user.id != BOT_OWNER_ID:
         return await message.answer("Нет доступа")
-    log_user_action(message.from_user.id, "/logs", message.from_user.username)
     logs = get_user_logs()
+    log_user_action(message.from_user.id, "/logs", message.from_user.username)
     if not logs:
         return await message.answer("Нет логов действий за последние 14 дней.")
+
+    unique_users = len({user_id for _, user_id, _, _ in logs})
+    await message.answer(
+        "Логи действий всех пользователей за последние 14 дней:\n"
+        f"Записей: {len(logs)}\n"
+        f"Пользователей: {unique_users}"
+    )
+
     lines = [
         f"{ts}: {user_id} (@{username}) — {action}" if username else f"{ts}: {user_id} (без username) — {action}"
         for ts, user_id, username, action in logs

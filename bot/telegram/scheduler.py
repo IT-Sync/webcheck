@@ -22,6 +22,7 @@ import asyncio
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
 MAX_CONCURRENT_CHECKS = int(os.getenv("MAX_CONCURRENT_CHECKS", "30"))
 HTTP_FAILURE_THRESHOLD = int(os.getenv("HTTP_FAILURE_THRESHOLD", "2"))
+CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "5"))
 WEEKLY_REPORT_DAY = os.getenv("WEEKLY_REPORT_DAY", "mon")
 WEEKLY_REPORT_HOUR = int(os.getenv("WEEKLY_REPORT_HOUR", "9"))
 WEEKLY_REPORT_MINUTE = int(os.getenv("WEEKLY_REPORT_MINUTE", "0"))
@@ -235,7 +236,7 @@ async def send_weekly_reports(bot):
 
 async def start_scheduler(bot):
     scheduler = AsyncIOScheduler(timezone=SCHEDULER_TIMEZONE)
-    scheduler.add_job(monitor, "interval", minutes=5, args=[bot])
+    scheduler.add_job(monitor, "interval", minutes=CHECK_INTERVAL_MINUTES, args=[bot])
     scheduler.add_job(
         send_weekly_reports,
         "cron",

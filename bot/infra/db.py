@@ -159,6 +159,91 @@ def get_all_sites(full=False):
         c.execute("SELECT DISTINCT user_id, url FROM sites ORDER BY user_id, url")
     return c.fetchall()
 
+def get_admin_users():
+    c.execute("""
+        SELECT
+            user_id,
+            MAX(username) FILTER (WHERE username IS NOT NULL AND username <> '') AS username,
+            COUNT(*) FILTER (WHERE source = 'site') AS site_count,
+            MAX(last_checked) AS last_checked,
+            MAX(last_action_at) AS last_action_at
+        FROM (
+            SELECT user_id, username, 'site' AS source, last_checked, NULL::timestamp AS last_action_at
+            FROM sites
+            UNION ALL
+            SELECT user_id, username, 'log' AS source, NULL::timestamp AS last_checked, created_at AS last_action_at
+            FROM user_logs
+        ) rows
+        GROUP BY user_id
+        ORDER BY last_action_at DESC NULLS LAST, user_id
+    """)
+    return [
+        {
+            "user_id": row[0],
+            "username": row[1],
+            "site_count": row[2],
+            "last_checked": row[3],
+            "last_action_at": row[4],
+        }
+        for row in c.fetchall()
+    ]
+
+def get_admin_stats():
+    c.execute("SELECT COUNT(DISTINCT user_id), COUNT(*) FROM sites")
+    users_with_sites, site_count = c.fetchone()
+    c.execute("SELECT COUNT(DISTINCT user_id), COUNT(*) FROM user_logs WHERE created_at > %s", (datetime.utcnow() - timedelta(days=14),))
+    active_users_14d, logs_14d = c.fetchone()
+    c.execute("""
+        SELECT
+            COUNT(*) FILTER (
+                WHERE COALESCE(is_paused, FALSE) = FALSE
+                  AND (paused_until IS NULL OR paused_until <= %s)
+            ),
+            COUNT(*) FILTER (
+                WHERE COALESCE(is_paused, FALSE) = TRUE
+                   OR (paused_until IS NOT NULL AND paused_until > %s)
+            )
+        FROM sites
+    """, (datetime.utcnow(), datetime.utcnow()))
+    active_sites, paused_sites = c.fetchone()
+    c.execute("SELECT COUNT(*) FROM events WHERE created_at > %s", (datetime.utcnow() - timedelta(days=14),))
+    events_14d = c.fetchone()[0]
+    return {
+        "users_with_sites": users_with_sites or 0,
+        "site_count": site_count or 0,
+        "active_sites": active_sites or 0,
+        "paused_sites": paused_sites or 0,
+        "active_users_14d": active_users_14d or 0,
+        "logs_14d": logs_14d or 0,
+        "events_14d": events_14d or 0,
+    }
+
+def get_admin_sites(user_id=None):
+    params = [datetime.utcnow()]
+    where = ""
+    if user_id is not None:
+        where = "WHERE user_id = %s"
+        params.append(user_id)
+    c.execute(f"""
+        SELECT id, user_id, username, url, last_status, last_checked,
+               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now
+        FROM sites
+        {where}
+        ORDER BY user_id, id
+    """, tuple(params))
+    return [
+        {
+            "id": row[0],
+            "user_id": row[1],
+            "username": row[2],
+            "url": row[3],
+            "last_status": row[4],
+            "last_checked": row[5],
+            "is_paused": row[6],
+        }
+        for row in c.fetchall()
+    ]
+
 def get_all_site_checks():
     c.execute("""
         SELECT id, user_id, url, incident_started_at, last_success_at,

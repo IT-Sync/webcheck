@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import os
 
 from bot.infra.db import migrate_add_notification_flags
+from bot.admin_console.server import start_admin_console
 from bot.telegram.handlers import register_handlers
 from bot.telegram.scheduler import start_scheduler
 
@@ -18,7 +19,12 @@ async def main():
     dp = Dispatcher()
     register_handlers(dp, bot)
     await start_scheduler(bot)
-    await dp.start_polling(bot)
+    admin_runner = await start_admin_console(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        if admin_runner:
+            await admin_runner.cleanup()
 
 if __name__ == '__main__':
     asyncio.run(main())
