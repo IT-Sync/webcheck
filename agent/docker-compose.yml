@@ -1,0 +1,8 @@
+services:
+  webcheck-agent:
+    build:
+      context: ..
+      dockerfile: agent/Dockerfile
+    restart: always
+    env_file:
+      - .env

@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 from aiohttp import web
 from aiogram.exceptions import TelegramForbiddenError
 
+from bot.agent_server.registry import AGENT_REGISTRY
 from bot.infra.db import (
     admin_delete_site_by_id,
     delete_user_data,
@@ -89,6 +90,7 @@ def page(title: str, body: str, active: str = "") -> web.Response:
         ("users", "/admin/users", "Пользователи"),
         ("logs", "/admin/logs", "Логи"),
         ("events", "/admin/events", "События"),
+        ("agents", "/admin/agents", "Агенты"),
         ("messages", "/admin/messages", "Сообщения"),
     ]
     nav_html = "".join(
@@ -449,6 +451,48 @@ async def events(request: web.Request) -> web.Response:
 
 
 @require_auth
+async def agents(request: web.Request) -> web.Response:
+    rows = await AGENT_REGISTRY.list_agents()
+    results = await AGENT_REGISTRY.recent_results()
+    table = "".join(
+        f"""<tr>
+  <td><code>{esc(row['agent_id'])}</code></td>
+  <td>{esc(row['country'])}</td>
+  <td>{esc(row['region'])}</td>
+  <td>{esc(row['provider'])}</td>
+  <td>{fmt_dt(row['connected_at'])}</td>
+  <td>{fmt_dt(row['last_seen_at'])}</td>
+  <td>{fmt_dt(row['last_result_at'])}</td>
+  <td>{esc(row['remote'])}</td>
+</tr>"""
+        for row in rows
+    ) or '<tr><td colspan="8">Онлайн-агентов нет</td></tr>'
+    result_rows = "".join(
+        f"""<tr>
+  <td>{fmt_dt(row['received_at'])}</td>
+  <td><code>{esc(row['agent_id'])}</code></td>
+  <td>{esc(row['country'])}</td>
+  <td>{esc(row['url'])}</td>
+  <td>{'<span class="status-ok">OK</span>' if row['ok'] else '<span class="status-bad">DOWN</span>'}</td>
+  <td>{esc(row['error'] or '')}</td>
+</tr>"""
+        for row in results[:30]
+    ) or '<tr><td colspan="6">Результатов пока нет</td></tr>'
+    body = f"""
+<h2>Агенты</h2>
+<table>
+  <thead><tr><th>Agent ID</th><th>Страна</th><th>Регион</th><th>Provider</th><th>Подключён</th><th>Heartbeat</th><th>Результат</th><th>Remote</th></tr></thead>
+  <tbody>{table}</tbody>
+</table>
+<h2 style="margin-top:24px">Последние результаты</h2>
+<table>
+  <thead><tr><th>Дата</th><th>Agent ID</th><th>Страна</th><th>URL</th><th>Статус</th><th>Ошибка</th></tr></thead>
+  <tbody>{result_rows}</tbody>
+</table>"""
+    return page("Агенты", body, "agents")
+
+
+@require_auth
 async def messages(request: web.Request) -> web.Response:
     user_id = request.query.get("user_id", "")
     username = ""
@@ -591,6 +635,7 @@ def create_app(bot) -> web.Application:
     app.router.add_post("/admin/users/{user_id:\\d+}/delete", delete_user)
     app.router.add_get("/admin/logs", logs)
     app.router.add_get("/admin/events", events)
+    app.router.add_get("/admin/agents", agents)
     app.router.add_get("/admin/messages", messages)
     app.router.add_post("/admin/messages/send", send_message)
     app.router.add_post("/admin/messages/broadcast", broadcast_message)
