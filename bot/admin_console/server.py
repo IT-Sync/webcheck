@@ -51,6 +51,10 @@ def redirect_messages(result: str) -> web.HTTPFound:
     return web.HTTPFound("/admin/messages?" + urlencode({"result": result}))
 
 
+def redirect_agents(result: str) -> web.HTTPFound:
+    return web.HTTPFound("/admin/agents?" + urlencode({"result": result}))
+
+
 def bar_chart(rows, value_key: str, label: str, empty_text: str = "Данных пока нет") -> str:
     max_value = max((row.get(value_key, 0) for row in rows), default=0)
     if max_value <= 0:
@@ -454,6 +458,24 @@ async def events(request: web.Request) -> web.Response:
 async def agents(request: web.Request) -> web.Response:
     rows = await AGENT_REGISTRY.list_agents()
     results = await AGENT_REGISTRY.recent_results()
+    flash = esc(request.query.get("result", ""))
+    flash_html = f'<div class="flash">{flash}</div>' if flash else ""
+    options = "".join(
+        f"<option value=\"{esc(row['agent_id'])}\">{esc(row['agent_id'])} · {esc(row['country'])} {esc(row['region'])}</option>"
+        for row in rows
+    )
+    check_form = (
+        f"""<section class="panel" style="margin-bottom:16px">
+  <h2>Отправить задание агенту</h2>
+  <form method="post" action="/admin/agents/check">
+    <label>Агент<select name="agent_id" required>{options}</select></label>
+    <label>URL<input name="url" placeholder="https://example.com" required></label>
+    <label>Timeout, сек<input name="timeout_sec" value="45" inputmode="numeric"></label>
+    <button type="submit">Проверить</button>
+  </form>
+</section>"""
+        if rows else ""
+    )
     table = "".join(
         f"""<tr>
   <td><code>{esc(row['agent_id'])}</code></td>
@@ -480,6 +502,8 @@ async def agents(request: web.Request) -> web.Response:
     ) or '<tr><td colspan="6">Результатов пока нет</td></tr>'
     body = f"""
 <h2>Агенты</h2>
+{flash_html}
+{check_form}
 <table>
   <thead><tr><th>Agent ID</th><th>Страна</th><th>Регион</th><th>Provider</th><th>Подключён</th><th>Heartbeat</th><th>Результат</th><th>Remote</th></tr></thead>
   <tbody>{table}</tbody>
@@ -490,6 +514,31 @@ async def agents(request: web.Request) -> web.Response:
   <tbody>{result_rows}</tbody>
 </table>"""
     return page("Агенты", body, "agents")
+
+
+@require_auth
+async def send_agent_check(request: web.Request) -> web.Response:
+    data = await request.post()
+    agent_id = str(data.get("agent_id") or "").strip()
+    url = str(data.get("url") or "").strip()
+    try:
+        timeout_sec = int(data.get("timeout_sec") or 45)
+    except ValueError:
+        timeout_sec = 45
+    if not agent_id or not url:
+        raise redirect_agents("Укажите агента и URL")
+    try:
+        job_id = await AGENT_REGISTRY.send_check(
+            agent_id,
+            url,
+            checks=["http", "ssl", "domain"],
+            timeout_sec=timeout_sec,
+        )
+    except KeyError:
+        raise redirect_agents("Агент не online")
+    except Exception as e:
+        raise redirect_agents(f"Не удалось отправить задание: {type(e).__name__}: {e}")
+    raise redirect_agents(f"Задание отправлено агенту {agent_id}, job_id={job_id}")
 
 
 @require_auth
@@ -636,6 +685,7 @@ def create_app(bot) -> web.Application:
     app.router.add_get("/admin/logs", logs)
     app.router.add_get("/admin/events", events)
     app.router.add_get("/admin/agents", agents)
+    app.router.add_post("/admin/agents/check", send_agent_check)
     app.router.add_get("/admin/messages", messages)
     app.router.add_post("/admin/messages/send", send_message)
     app.router.add_post("/admin/messages/broadcast", broadcast_message)
