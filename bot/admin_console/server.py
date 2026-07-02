@@ -19,7 +19,6 @@ from bot.infra.db import (
     get_event_logs,
     get_site_by_id,
     get_user_logs,
-    log_bot_message,
     log_user_action,
     set_site_paused_by_id,
 )
@@ -298,7 +297,7 @@ async def dashboard(request: web.Request) -> web.Response:
         ("Активных за 14 дней", stats["active_users_14d"]),
         ("Логов за 14 дней", stats["logs_14d"]),
         ("Событий за 14 дней", stats["events_14d"]),
-        ("Сообщений отправлено", stats["sent_messages_14d"]),
+        ("Сообщений бота", stats["sent_messages_14d"]),
         ("Ошибок отправки", stats["failed_messages_14d"]),
     ]
     metric_html = "".join(f'<div class="metric"><strong>{value}</strong><span>{label}</span></div>' for label, value in metrics)
@@ -320,7 +319,7 @@ async def dashboard(request: web.Request) -> web.Response:
   </section>
   <section>
     <h2>Сообщения бота</h2>
-    {bar_chart(message_stats, "sent", "Отправленные сообщения", "Отправленных из web-консоли сообщений пока нет")}
+    {bar_chart(message_stats, "sent", "Отправленные сообщения", "Отправленных сообщений пока нет")}
   </section>
 </div>
 <div class="split">
@@ -467,12 +466,9 @@ async def send_message(request: web.Request) -> web.Response:
     try:
         await bot.send_message(user_id, text)
     except TelegramForbiddenError:
-        log_bot_message(user_id, "web-direct", "forbidden", "TelegramForbiddenError")
         raise redirect_messages("Пользователь заблокировал бота")
     except Exception as e:
-        log_bot_message(user_id, "web-direct", "failed", str(e)[:240])
         raise redirect_messages(f"Ошибка отправки: {type(e).__name__}")
-    log_bot_message(user_id, "web-direct", "sent")
     log_user_action(BOT_OWNER_ID, f"web: отправил сообщение пользователю {user_id}", "web-admin")
     raise redirect_messages("Сообщение отправлено")
 
@@ -492,14 +488,11 @@ async def broadcast_message(request: web.Request) -> web.Response:
     for user in users:
         try:
             await bot.send_message(user["user_id"], text)
-            log_bot_message(user["user_id"], "web-broadcast", "sent")
             sent += 1
             await asyncio.sleep(0.04)
         except TelegramForbiddenError:
-            log_bot_message(user["user_id"], "web-broadcast", "forbidden", "TelegramForbiddenError")
             failed += 1
         except Exception as e:
-            log_bot_message(user["user_id"], "web-broadcast", "failed", str(e)[:240])
             failed += 1
     log_user_action(BOT_OWNER_ID, f"web: массовая отправка, успешно {sent}, ошибок {failed}", "web-admin")
     raise redirect_messages(f"Массовая отправка завершена: успешно {sent}, ошибок {failed}")
