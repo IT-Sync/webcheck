@@ -10,7 +10,7 @@ from db import (
     update_site_status, update_site_status_by_id, delete_user_data,
     get_site_for_user, get_site_by_id, delete_site_by_id,
     admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
-    set_site_paused_until_by_id
+    set_site_paused_until_by_id, get_site_pause_status
 )
 from monitor import check_http_details, check_ssl, check_domain_expiry, get_geo_info
 from subfinder import find_subdomains, export_subdomains_csv
@@ -57,6 +57,7 @@ def build_site_keyboard(url, site_id=None, paused=False):
     kb = InlineKeyboardBuilder()
     if site_id:
         kb.button(text="📊 Статус", callback_data=site_status_callback(site_id))
+        kb.button(text="🔄 Проверить", callback_data=site_check_now_callback(site_id))
         if paused:
             kb.button(text="▶️ Возобновить", callback_data=site_resume_callback(site_id))
         else:
@@ -66,6 +67,16 @@ def build_site_keyboard(url, site_id=None, paused=False):
         kb.button(text="📊 Статус", callback_data=f"status:{url}")
         kb.button(text="🗑 Удалить", callback_data=f"delete:{url}")
     return kb.as_markup()
+
+def format_cached_status(site_row, paused=None):
+    url = site_row[3]
+    status = site_row[4] or "Статус ещё не получен. Нажмите 🔄 Проверить для живой проверки."
+    checked_at = site_row[5]
+    checked_text = checked_at.strftime("%Y-%m-%d %H:%M:%S") if checked_at else "не проверялся"
+    if paused is None:
+        paused = False
+    pause_text = "\n⏸ Мониторинг на паузе" if paused else ""
+    return f"🔗 {url}\n{status}\n🕒 Последняя проверка: {checked_text}{pause_text}"
 
 def build_incident_keyboard(site_id):
     kb = InlineKeyboardBuilder()
@@ -232,14 +243,23 @@ async def inline_status_by_id(query: types.CallbackQuery):
     if not site:
         return await query.answer("❌ Сайт не найден", show_alert=True)
 
-    await query.answer("Проверяю...")
-    asyncio.create_task(send_status_report(query.from_user.id, site[3], query.message.bot, site_id=site_id))
+    await query.answer("Готово")
+    await query.message.answer(
+        format_cached_status(site, paused=get_site_pause_status(site_id)),
+        reply_markup=build_site_keyboard(site[3], site_id, paused=get_site_pause_status(site_id))
+    )
 
 @router.callback_query(F.data.startswith("status:"))
 async def inline_status(query: types.CallbackQuery):
     url = normalize_url(query.data.split(":", 1)[1])
-    await query.answer("Проверяю...")
-    asyncio.create_task(send_status_report(query.from_user.id, url, query.message.bot))
+    site = get_site_by_url_for_user(query.from_user.id, url)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+    await query.answer("Готово")
+    await query.message.answer(
+        format_cached_status(site, paused=get_site_pause_status(site[0])),
+        reply_markup=build_site_keyboard(site[3], site[0], paused=get_site_pause_status(site[0]))
+    )
 
 @router.callback_query(F.data.startswith("del:"))
 async def inline_delete_by_id(query: types.CallbackQuery):
@@ -303,7 +323,8 @@ async def inline_check_now(query: types.CallbackQuery):
     if not site:
         return await query.answer("❌ Сайт не найден", show_alert=True)
 
-    await query.answer("Проверяю...")
+    await query.answer("Проверяю в фоне...")
+    await query.message.answer(f"🔄 Запустил живую проверку: {site[3]}")
     asyncio.create_task(send_status_report(query.from_user.id, site[3], query.message.bot, site_id=site_id))
 
 @router.callback_query(F.data.startswith("p1h:"))
@@ -470,20 +491,12 @@ async def status_me(message: types.Message):
     args = message.text.split(" ", 1)
     user_sites = get_sites_with_pause(message.from_user.id)
 
-    def format_status(site_row):
-        url = site_row[3]
-        status = site_row[4] or "Статус ещё не получен."
-        checked_at = site_row[5]
-        checked_text = checked_at.strftime("%Y-%m-%d %H:%M:%S") if checked_at else "не проверялся"
-        pause_text = "\n⏸ Мониторинг на паузе" if site_row[6] else ""
-        return f"🔗 {url}\n{status}\n🕒 Последняя проверка: {checked_text}{pause_text}"
-
     if len(args) == 2:
         url = normalize_url(args[1].strip())
         site = next((s for s in user_sites if s[3] == url), None)
         if not site:
             return await message.answer("❌ Этот сайт не найден среди ваших.")
-        await message.answer(format_status(site))
+        await message.answer(format_cached_status(site, paused=site[6]))
     else:
         await send_weekly_user_report(message)
 
