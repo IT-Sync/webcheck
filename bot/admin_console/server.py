@@ -429,6 +429,16 @@ async def events(request: web.Request) -> web.Response:
 @require_auth
 async def messages(request: web.Request) -> web.Response:
     user_id = request.query.get("user_id", "")
+    username = ""
+    recipient_html = ""
+    if user_id.isdigit():
+        profile = get_admin_user(int(user_id))
+        username = profile.get("username") or ""
+        recipient_name = f"@{username}" if username else "без username"
+        recipient_html = (
+            f'<div class="flash">Получатель: <strong>{esc(recipient_name)}</strong> '
+            f'· User ID: <code>{esc(user_id)}</code></div>'
+        )
     flash = esc(request.query.get("result", ""))
     flash_html = f'<div class="flash">{flash}</div>' if flash else ""
     body = f"""
@@ -437,8 +447,10 @@ async def messages(request: web.Request) -> web.Response:
 <div class="split">
   <section class="panel">
     <h2>Одному пользователю</h2>
+    {recipient_html}
     <form method="post" action="/admin/messages/send">
       <label>User ID<input name="user_id" value="{esc(user_id)}" inputmode="numeric" required></label>
+      <label>Username<input value="{esc('@' + username if username else 'без username')}" readonly></label>
       <label>Сообщение<textarea name="text" required></textarea></label>
       <button type="submit">Отправить</button>
     </form>
