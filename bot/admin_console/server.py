@@ -431,6 +431,7 @@ async def messages(request: web.Request) -> web.Response:
     user_id = request.query.get("user_id", "")
     username = ""
     recipient_html = ""
+    recipient_fields = '<label>User ID<input name="user_id" value="" inputmode="numeric" required></label>'
     if user_id.isdigit():
         profile = get_admin_user(int(user_id))
         username = profile.get("username") or ""
@@ -439,6 +440,7 @@ async def messages(request: web.Request) -> web.Response:
             f'<div class="flash">Получатель: <strong>{esc(recipient_name)}</strong> '
             f'· User ID: <code>{esc(user_id)}</code></div>'
         )
+        recipient_fields = f'<input type="hidden" name="user_id" value="{esc(user_id)}">'
     flash = esc(request.query.get("result", ""))
     flash_html = f'<div class="flash">{flash}</div>' if flash else ""
     body = f"""
@@ -449,8 +451,7 @@ async def messages(request: web.Request) -> web.Response:
     <h2>Одному пользователю</h2>
     {recipient_html}
     <form method="post" action="/admin/messages/send">
-      <label>User ID<input name="user_id" value="{esc(user_id)}" inputmode="numeric" required></label>
-      <label>Username<input value="{esc('@' + username if username else 'без username')}" readonly></label>
+      {recipient_fields}
       <label>Сообщение<textarea name="text" required></textarea></label>
       <button type="submit">Отправить</button>
     </form>
