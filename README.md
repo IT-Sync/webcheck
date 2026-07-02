@@ -93,10 +93,12 @@ AGENT_WS_TOKEN=общий_секрет_для_агентов
 AGENT_WS_HOST=0.0.0.0
 AGENT_WS_PORT=8090
 AGENT_WS_PATH=/ws/agents
-AGENT_WS_PUBLISH_HOST=127.0.0.1
+AGENT_WS_PUBLISH_HOST=0.0.0.0
 ```
 
-В Docker порт агента публикуется отдельно от админки. Для публичного `wss://` обычно ставится TLS reverse proxy, который проксирует наружный адрес на внутренний `ws://127.0.0.1:8090/ws/agents`.
+В Docker порт агента публикуется отдельно от админки. Если агент запускается в контейнере и подключается через `host.docker.internal`, порт должен быть опубликован не только на `127.0.0.1`, а на `0.0.0.0` или конкретный адрес docker gateway.
+
+Само приложение слушает обычный `ws://`. Для публичного `wss://` обычно ставится TLS reverse proxy, который проксирует наружный адрес на внутренний `ws://127.0.0.1:8090/ws/agents`.
 
 Быстрый старт:
 ```bash
@@ -108,6 +110,11 @@ docker compose up -d --build
 В `.env` агента порт указывается прямо в `SERVER_WS_URL`, например:
 ```
 SERVER_WS_URL=wss://your-domain.example:443/ws/agents
+```
+
+Для агента в Docker на той же машине без TLS:
+```
+SERVER_WS_URL=ws://host.docker.internal:8090/ws/agents
 ```
 
 ## Локальный запуск без Docker

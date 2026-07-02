@@ -15,8 +15,9 @@
    ```
    Для локальной проверки без TLS можно использовать:
    ```env
-   SERVER_WS_URL=ws://127.0.0.1:8090/ws/agents
+   SERVER_WS_URL=ws://host.docker.internal:8090/ws/agents
    ```
+   Если агент запускается не в контейнере, подойдёт `ws://127.0.0.1:8090/ws/agents`.
 3. Запустите:
    ```bash
    docker compose up -d --build
