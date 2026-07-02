@@ -55,19 +55,23 @@ DB_PORT=5432
 3. Экспортируйте переменные (`export $(cat .env | xargs)` или используйте `python-dotenv`).
 4. Запустите бота:
    ```bash
-   python bot/main.py
+   python -m bot.main
    ```
 
 ## Структура проекта
 ```
 bot/
-  main.py          # входная точка, запускает aiogram + планировщик
-  handlers.py      # все Telegram-команды и inline-обработчики
-  db.py            # работа с PostgreSQL, миграция notified_* флагов
-  monitor.py       # HTTP/SSL/доменные проверки
-  scheduler.py     # периодические задачи
-  subfinder.py     # поиск поддоменов и экспорт CSV
+  main.py             # входная точка, запускает aiogram + планировщик
+  telegram/           # Telegram-команды, inline-обработчики, scheduler
+  checks/             # HTTP/SSL/WHOIS/GeoIP-проверки и поиск поддоменов
+  checks/service.py   # общий сервис проверки ресурса для UI и будущих агентов
+  infra/              # PostgreSQL и инфраструктурные адаптеры
+  core/               # форматтеры, URL-утилиты и общие helpers
 ```
+
+Старые модули верхнего уровня (`bot/monitor.py`, `bot/db.py` и т.п.) оставлены как compatibility-wrapper'ы для существующих импортов.
+
+Дополнительная архитектурная заметка по будущему websocket-агенту: `docs/architecture.md`.
 
 ## Админские команды
 - `/admin` — список всех сайтов и пользователи, с inline‑удалением.

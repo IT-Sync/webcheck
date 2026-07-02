@@ -1,10 +1,12 @@
 # Python
 __pycache__/
 *.pyc
+*_bak
 
 # Virtualenv
 venv/
 env/
+.venv/
 
 # IDE
 .vscode/
@@ -27,4 +29,3 @@ pgdata/
 # Misc
 *.swp
 .DS_Store
-

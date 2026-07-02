@@ -14,4 +14,4 @@ RUN apt-get update \
 
 COPY bot/ ./bot/
 
-CMD ["python", "bot/main.py"]
+CMD ["python", "-m", "bot.main"]

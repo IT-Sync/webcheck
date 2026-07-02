@@ -1,18 +1,18 @@
 ### bot/main.py
 import asyncio
 from aiogram import Bot, Dispatcher
-from handlers import register_handlers
-from scheduler import start_scheduler
 from dotenv import load_dotenv
 import os
 
-from db import migrate_add_notification_flags  # ⬅️ импорт функции миграции
+from bot.infra.db import migrate_add_notification_flags
+from bot.telegram.handlers import register_handlers
+from bot.telegram.scheduler import start_scheduler
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 async def main():
-    migrate_add_notification_flags()  # ⬅️ вызов миграции
+    migrate_add_notification_flags()
 
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
@@ -22,4 +22,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-

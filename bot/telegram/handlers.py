@@ -1,0 +1,822 @@
+from aiogram import Router, types, F
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from bot.infra.db import (
+    add_site, get_sites, delete_site, get_all_sites, get_site_statuses,
+    get_sites_with_pause, get_site_by_url_for_user,
+    get_event_logs, log_user_action, get_user_logs,
+    get_report_sites, get_event_logs_for_url,
+    export_user_logs_csv as export_logs_file,
+    export_sites_csv as export_sites_file,
+    update_site_status, update_site_status_by_id, delete_user_data,
+    get_site_for_user, get_site_by_id, delete_site_by_id,
+    admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
+    set_site_paused_until_by_id, get_site_pause_status
+)
+from bot.checks.monitor import get_geo_info
+from bot.checks.service import check_resource
+from bot.checks.subfinder import find_subdomains, export_subdomains_csv
+from bot.telegram.callback_data import (
+    admin_delete_callback, site_delete_callback, site_pause_callback,
+    site_resume_callback, site_status_callback, site_check_now_callback,
+    site_history_callback, site_pause_1h_callback
+)
+from bot.core.status_formatter import (
+    format_status_text, format_user_status_message, format_weekly_user_report,
+    split_message
+)
+from bot.core.url_utils import normalize_url
+import os
+import asyncio
+import socket
+from datetime import datetime, timedelta
+from urllib.parse import urlparse
+
+router = Router()
+BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
+ADMIN_COMMANDS_TEXT = (
+    "🛠 Админ-команды:\n"
+    "/admin_help — список админских команд\n"
+    "/admin — пользователи и их сайты\n"
+    "/admin_stats — статистика по пользователям\n"
+    "/status — статусы всех сайтов\n"
+    "/events — журнал событий за 14 дней\n"
+    "/logs — действия пользователей за 14 дней\n"
+    "/export_logs — экспорт логов CSV\n"
+    "/export_sites — экспорт сайтов CSV\n"
+    "/weekly_all — еженедельный отчёт по всем ресурсам\n"
+    "/remove_user <user_id> — удалить сайты и логи пользователя"
+)
+
+def is_domain_resolvable(domain: str) -> bool:
+    try:
+        socket.gethostbyname(domain)
+        return True
+    except socket.error:
+        return False
+
+def build_site_keyboard(url, site_id=None, paused=False):
+    kb = InlineKeyboardBuilder()
+    if site_id:
+        kb.button(text="📊 Статус", callback_data=site_status_callback(site_id))
+        kb.button(text="🔄 Проверить", callback_data=site_check_now_callback(site_id))
+        if paused:
+            kb.button(text="▶️ Возобновить", callback_data=site_resume_callback(site_id))
+        else:
+            kb.button(text="⏸ Пауза", callback_data=site_pause_callback(site_id))
+        kb.button(text="🗑 Удалить", callback_data=site_delete_callback(site_id))
+    else:
+        kb.button(text="📊 Статус", callback_data=f"status:{url}")
+        kb.button(text="🗑 Удалить", callback_data=f"delete:{url}")
+    return kb.as_markup()
+
+def format_cached_status(site_row, paused=None):
+    url = site_row[3]
+    status = site_row[4] or "Статус ещё не получен. Нажмите 🔄 Проверить для живой проверки."
+    checked_at = site_row[5]
+    checked_text = checked_at.strftime("%Y-%m-%d %H:%M:%S") if checked_at else "не проверялся"
+    if paused is None:
+        paused = False
+    pause_text = "\n⏸ Мониторинг на паузе" if paused else ""
+    return f"🔗 {url}\n{status}\n🕒 Последняя проверка: {checked_text}{pause_text}"
+
+def build_incident_keyboard(site_id):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Проверить сейчас", callback_data=site_check_now_callback(site_id))
+    kb.button(text="Пауза 1 час", callback_data=site_pause_1h_callback(site_id))
+    kb.button(text="Открыть историю", callback_data=site_history_callback(site_id))
+    kb.adjust(1)
+    return kb.as_markup()
+
+async def process_site_input(user_id, username, url, bot):
+    url = normalize_url(url)
+    
+    if url in ["https://127.0.0.1", "https://localhost"]:
+        await bot.send_message(user_id, "🖥️ Со мной всегда всё в порядке. Меня не нужно проверять 😎")
+        return
+    
+    domain = urlparse(url).hostname
+
+    if not is_domain_resolvable(domain):
+        await bot.send_message(user_id, f"❌ Домен `{domain}` не резолвится. Проверьте правильность имени.", parse_mode="Markdown")
+        return
+
+    sites = get_sites(user_id)
+    if any(s[3] == url for s in sites):
+        await bot.send_message(user_id, "⚠️ Этот сайт уже добавлен.")
+        return
+
+    site_id = add_site(user_id, url, username)
+    log_user_action(user_id, f"Добавил сайт: {url}", username)
+    # 👇 Добавляем GeoIP-проверку
+    geo_info = await get_geo_info(url)
+    await bot.send_message(user_id, geo_info)
+    
+    await bot.send_message(user_id, f"✅ Добавлен сайт: {url}\nПроверяю...")
+    await send_status_report(user_id, url, bot, site_id=site_id)
+
+@router.message(F.text == "/start")
+async def cmd_start(message: types.Message):
+    log_user_action(message.from_user.id, "/start", message.from_user.username)
+    await message.answer(
+        "Привет! Я бот для мониторинга сайтов.\n\n"
+        "📡 Просто отправь ссылку на сайт, например:\n"
+        "`https://example.com` или `example.com`\n\n"
+        "📋 Команды:\n"
+        "/list — Мои сайты\n"
+        "/delete <URL> — Удалить сайт\n"
+        "/pause <URL> — Поставить мониторинг на паузу\n"
+        "/resume <URL> — Возобновить мониторинг\n"
+        "/statusme — Сводный отчёт по вашим ресурсам\n"
+        "/statusme <URL> — Статус одного сайта\n"
+        "/weekly — То же, что /statusme\n"
+        "/subdomains <домен> — Поиск поддоменов\n\n"
+        "🔐 SSL и 🌐 домен также проверяются.\n"
+        "_Поддомены не проходят проверку домена._\n\n"
+        "🔔 Я пришлю уведомление, если:\n"
+        "— сайт станет недоступен\n"
+        "— до окончания SSL-сертификата останется 14 дней или меньше\n"
+        "— до окончания регистрации домена останется 14 дней или меньше.",
+        parse_mode="Markdown"
+    )
+
+@router.message(F.text == "/help")
+async def cmd_help(message: types.Message):
+    log_user_action(message.from_user.id, "/help", message.from_user.username)
+    await message.answer(
+        "🆘 <b>Помощь по командам</b>\n\n"
+        "💡 Просто отправьте ссылку на сайт, и я начну его мониторинг.\n\n"
+        "📋 <b>Доступные команды:</b>\n"
+        "/list — Показать ваши добавленные сайты\n"
+        "/delete &lt;URL&gt; — Удалить сайт из мониторинга\n"
+        "/pause &lt;URL&gt; — Поставить мониторинг сайта на паузу\n"
+        "/resume &lt;URL&gt; — Возобновить мониторинг сайта\n"
+        "/statusme — Сводный отчёт по вашим ресурсам\n"
+        "/statusme &lt;URL&gt; — Проверить статус конкретного сайта\n"
+        "/weekly — То же, что /statusme\n"
+        "/subdomains &lt;домен&gt; — Найти поддомены \n\n"
+        "🔐 <b>Я проверяю:</b>\n"
+        "— доступность сайта (HTTP)\n"
+        "— срок действия SSL-сертификата\n"
+        "— дату окончания регистрации домена (кроме поддоменов)\n\n"
+        "🔔 <b>Я отправлю уведомление, если:</b>\n"
+        "— сайт станет недоступен\n"
+        "— SSL или домен истекают через 14 дней или раньше\n\n"
+        "✍️ Просто пришлите ссылку — и начнётся мониторинг!",
+        parse_mode="HTML"
+    )
+
+@router.message(F.text.startswith("/delete"))
+async def delete_website(message: types.Message):
+    user_id = message.from_user.id
+    try:
+        url = normalize_url(message.text.split(" ", 1)[1].strip())
+        deleted = delete_site(user_id, url)
+        log_user_action(user_id, f"Удалил сайт: {url}", message.from_user.username)
+        if deleted:
+            await message.answer(f"🗑 Удалён сайт: {url}")
+        else:
+            await message.answer("❌ Сайт не найден среди ваших.")
+    except IndexError:
+        await message.answer("Используйте: /delete <URL>")
+
+@router.message(F.text.startswith("/pause"))
+async def pause_website(message: types.Message):
+    user_id = message.from_user.id
+    try:
+        url = normalize_url(message.text.split(" ", 1)[1].strip())
+    except IndexError:
+        return await message.answer("Используйте: /pause <URL>")
+
+    updated = set_site_paused(user_id, url, True)
+    if updated:
+        site = get_site_by_url_for_user(user_id, url)
+        log_user_action(user_id, f"Поставил сайт на паузу: {url}", message.from_user.username)
+        await message.answer(
+            f"⏸ Мониторинг поставлен на паузу: {url}",
+            reply_markup=build_site_keyboard(url, site[0], paused=True) if site else None
+        )
+    else:
+        await message.answer("❌ Сайт не найден среди ваших.")
+
+@router.message(F.text.startswith("/resume"))
+async def resume_website(message: types.Message):
+    user_id = message.from_user.id
+    try:
+        url = normalize_url(message.text.split(" ", 1)[1].strip())
+    except IndexError:
+        return await message.answer("Используйте: /resume <URL>")
+
+    updated = set_site_paused(user_id, url, False)
+    if updated:
+        site = get_site_by_url_for_user(user_id, url)
+        log_user_action(user_id, f"Возобновил мониторинг сайта: {url}", message.from_user.username)
+        await message.answer(
+            f"▶️ Мониторинг возобновлён: {url}",
+            reply_markup=build_site_keyboard(url, site[0], paused=False) if site else None
+        )
+    else:
+        await message.answer("❌ Сайт не найден среди ваших.")
+
+@router.message(F.text == "/list")
+async def list_websites(message: types.Message):
+    user_id = message.from_user.id
+    log_user_action(user_id, "/list", message.from_user.username)
+    sites = get_sites_with_pause(user_id)
+    if not sites:
+        await message.answer("У вас пока нет добавленных сайтов.")
+    else:
+        for site in sites:
+            paused = bool(site[6])
+            status_text = " ⏸ на паузе" if paused else ""
+            await message.answer(
+                f"🔗 {site[3]}{status_text}",
+                reply_markup=build_site_keyboard(site[3], site[0], paused=paused)
+            )
+
+@router.callback_query(F.data.startswith("st:"))
+async def inline_status_by_id(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    await query.answer("Готово")
+    await query.message.answer(
+        format_cached_status(site, paused=get_site_pause_status(site_id)),
+        reply_markup=build_site_keyboard(site[3], site_id, paused=get_site_pause_status(site_id))
+    )
+
+@router.callback_query(F.data.startswith("status:"))
+async def inline_status(query: types.CallbackQuery):
+    url = normalize_url(query.data.split(":", 1)[1])
+    site = get_site_by_url_for_user(query.from_user.id, url)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+    await query.answer("Готово")
+    await query.message.answer(
+        format_cached_status(site, paused=get_site_pause_status(site[0])),
+        reply_markup=build_site_keyboard(site[3], site[0], paused=get_site_pause_status(site[0]))
+    )
+
+@router.callback_query(F.data.startswith("del:"))
+async def inline_delete_by_id(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    deleted = delete_site_by_id(site_id, query.from_user.id)
+    log_user_action(query.from_user.id, f"Удалил сайт (inline): {site[3]}", query.from_user.username)
+    if deleted:
+        await query.message.answer(f"🗑 Удалён сайт: {site[3]}")
+    else:
+        await query.message.answer("❌ Сайт не найден среди ваших.")
+    await query.answer("Удалено.")
+
+@router.callback_query(F.data.startswith("pause:"))
+async def inline_pause_by_id(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    set_site_paused_by_id(site_id, query.from_user.id, True)
+    log_user_action(query.from_user.id, f"Поставил сайт на паузу (inline): {site[3]}", query.from_user.username)
+    await query.message.answer(f"⏸ Мониторинг поставлен на паузу: {site[3]}")
+    await query.answer("На паузе")
+
+@router.callback_query(F.data.startswith("resume:"))
+async def inline_resume_by_id(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    set_site_paused_by_id(site_id, query.from_user.id, False)
+    log_user_action(query.from_user.id, f"Возобновил мониторинг сайта (inline): {site[3]}", query.from_user.username)
+    await query.message.answer(f"▶️ Мониторинг возобновлён: {site[3]}")
+    await query.answer("Возобновлено")
+
+@router.callback_query(F.data.startswith("chk:"))
+async def inline_check_now(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    await query.answer("Проверяю в фоне...")
+    await query.message.answer(f"🔄 Запустил живую проверку: {site[3]}")
+    asyncio.create_task(send_status_report(query.from_user.id, site[3], query.message.bot, site_id=site_id))
+
+@router.callback_query(F.data.startswith("p1h:"))
+async def inline_pause_one_hour(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    paused_until = datetime.utcnow() + timedelta(hours=1)
+    set_site_paused_until_by_id(site_id, query.from_user.id, paused_until)
+    log_user_action(query.from_user.id, f"Пауза 1 час из алерта: {site[3]}", query.from_user.username)
+    await query.message.answer(
+        f"⏸ Мониторинг поставлен на паузу до {paused_until.strftime('%H:%M UTC')}: {site[3]}",
+        reply_markup=build_site_keyboard(site[3], site_id, paused=True)
+    )
+    await query.answer("Пауза включена")
+
+@router.callback_query(F.data.startswith("hist:"))
+async def inline_site_history(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+
+    events = get_event_logs_for_url(site[3])
+    if not events:
+        await query.message.answer(f"Истории событий за 14 дней нет: {site[3]}")
+        return await query.answer("История пуста")
+
+    lines = [f"{ts}: {msg}" for ts, _, msg in events[:20]]
+    await query.message.answer(f"История {site[3]}:\n" + "\n".join(lines))
+    await query.answer("История открыта")
+
+@router.callback_query(F.data.startswith("delete:"))
+async def inline_delete(query: types.CallbackQuery):
+    url = normalize_url(query.data.split(":", 1)[1])
+    deleted = delete_site(query.from_user.id, url)
+    log_user_action(query.from_user.id, f"Удалил сайт (inline): {url}", query.from_user.username)
+    if deleted:
+        await query.message.answer(f"🗑 Удалён сайт: {url}")
+    else:
+        await query.message.answer("❌ Сайт не найден среди ваших.")
+    await query.answer("Удалено.")
+
+#@router.callback_query(F.data.startswith("admindelete_raw:"))
+#async def admin_delete_raw(query: types.CallbackQuery):
+#    if query.from_user.id != BOT_OWNER_ID:
+#        return await query.answer("⛔ Нет доступа", show_alert=True)
+#    url = query.data.split(":", 1)[1]
+#    admin_delete_site(url)
+#    await query.message.answer(f"🗑 Сайт {url} удалён администратором")
+#    await query.answer("Удалено.")
+
+@router.callback_query(F.data.startswith("admindelete:"))
+async def admin_delete_site_for_user(query: types.CallbackQuery):
+    if query.from_user.id != BOT_OWNER_ID:
+        return await query.answer("⛔ Нет доступа", show_alert=True)
+
+    try:
+        _, user_id_str, url = query.data.split(":", 2)
+        user_id = int(user_id_str)
+    except ValueError:
+        return await query.answer("❌ Неверный формат данных", show_alert=True)
+
+    deleted = delete_site(user_id, url)  # используем общую функцию
+    if deleted:
+        await query.message.answer(f"🗑 Сайт {url} удалён у пользователя {user_id}")
+    else:
+        await query.message.answer(f"⚠️ Сайт {url} не найден у пользователя {user_id}")
+    await query.answer("Удалено.")
+
+@router.callback_query(F.data.startswith("ad:"))
+async def admin_delete_site_by_site_id(query: types.CallbackQuery):
+    if query.from_user.id != BOT_OWNER_ID:
+        return await query.answer("⛔ Нет доступа", show_alert=True)
+
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверный формат данных", show_alert=True)
+
+    site = get_site_by_id(site_id)
+    if not site:
+        return await query.answer("Сайт уже удалён", show_alert=True)
+
+    deleted = admin_delete_site_by_id(site_id)
+    if deleted:
+        await query.message.answer(f"🗑 Сайт {site[3]} удалён у пользователя {site[1]}")
+    else:
+        await query.message.answer(f"⚠️ Сайт {site[3]} не найден")
+    await query.answer("Удалено.")
+
+@router.callback_query(F.data.startswith("adminuser:"))
+async def admin_user_details(query: types.CallbackQuery):
+    if query.from_user.id != BOT_OWNER_ID:
+        return await query.answer("⛔ Нет доступа", show_alert=True)
+
+    try:
+        user_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверный формат данных", show_alert=True)
+
+    sites = get_sites(user_id)
+    if not sites:
+        await query.message.answer(f"У пользователя {user_id} нет сайтов.")
+        return await query.answer("Нет данных")
+
+    username = next((row[2] for row in sites if row[2]), None)
+    total = len(sites)
+    chunk_size = 5
+
+    log_user_action(
+        query.from_user.id,
+        f"/admin view {user_id}",
+        query.from_user.username
+    )
+
+    for start in range(0, total, chunk_size):
+        chunk = sites[start:start + chunk_size]
+        lines = []
+        kb = InlineKeyboardBuilder()
+        for idx, site in enumerate(chunk, start=start + 1):
+            url = site[3]
+            lines.append(f"{idx}. {url}")
+            kb.button(text=f"🗑 {idx}", callback_data=admin_delete_callback(site[0]))
+        kb.adjust(2)
+
+        header = f"Пользователь {user_id}"
+        if username:
+            header += f" (@{username})"
+        header += f"\nСайты {start + 1}-{start + len(chunk)} из {total}:"
+
+        await query.message.answer(header + "\n" + "\n".join(lines), reply_markup=kb.as_markup())
+
+    await query.answer("Отправлено")
+
+
+async def send_status_report(user_id, url, bot, site_id=None):
+    result = await check_resource(url)
+    status_str = format_status_text(
+        result.http,
+        result.ssl_days,
+        result.domain_days,
+        result.registrar,
+        result.contact_url,
+    )
+    if site_id:
+        update_site_status_by_id(site_id, status_str)
+    else:
+        update_site_status(url, status_str)
+
+    text = format_user_status_message(
+        url,
+        result.http,
+        result.ssl_days,
+        result.domain_days,
+        result.registrar,
+        result.contact_url,
+    )
+    await bot.send_message(user_id, text)
+
+@router.message(F.text.startswith("/statusme"))
+async def status_me(message: types.Message):
+    log_user_action(message.from_user.id, "/statusme", message.from_user.username)
+    args = message.text.split(" ", 1)
+    user_sites = get_sites_with_pause(message.from_user.id)
+
+    if len(args) == 2:
+        url = normalize_url(args[1].strip())
+        site = next((s for s in user_sites if s[3] == url), None)
+        if not site:
+            return await message.answer("❌ Этот сайт не найден среди ваших.")
+        await message.answer(format_cached_status(site, paused=site[6]))
+    else:
+        await send_weekly_user_report(message)
+
+async def send_weekly_user_report(message: types.Message):
+    rows = get_report_sites(user_id=message.from_user.id)
+    for chunk in split_message(format_weekly_user_report(rows)):
+        await message.answer(chunk)
+
+@router.message(F.text == "/weekly")
+async def weekly_user_report(message: types.Message):
+    log_user_action(message.from_user.id, "/weekly", message.from_user.username)
+    await send_weekly_user_report(message)
+
+@router.message(F.text == "/admin")
+async def admin_overview(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+    log_user_action(message.from_user.id, "/admin", message.from_user.username)
+    all_sites = get_all_sites(full=True)
+    if not all_sites:
+        return await message.answer("Нет зарегистрированных сайтов.")
+
+    users = {}
+    for user_id, url, username in all_sites:
+        entry = users.setdefault(user_id, {"username": username, "sites": []})
+        if username and not entry["username"]:
+            entry["username"] = username
+        entry["sites"].append(url)
+
+    sorted_users = sorted(users.items(), key=lambda item: item[0])
+    chunk_size = 10
+
+    await message.answer("Выберите пользователя, чтобы посмотреть сайты и удалить их при необходимости.")
+
+    for i in range(0, len(sorted_users), chunk_size):
+        chunk = sorted_users[i:i + chunk_size]
+        lines = []
+        kb = InlineKeyboardBuilder()
+        for user_id, data in chunk:
+            username = data["username"]
+            username_text = f"@{username}" if username else "без username"
+            lines.append(f"{user_id}: {len(data['sites'])} сайтов — {username_text}")
+            kb.button(text=f"👤 {user_id}", callback_data=f"adminuser:{user_id}")
+        kb.adjust(2)
+        text = "Пользователи:\n" + "\n".join(lines)
+        await message.answer(text, reply_markup=kb.as_markup())
+
+@router.message(F.text == "/admin_help")
+async def admin_help(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+    log_user_action(message.from_user.id, "/admin_help", message.from_user.username)
+    await message.answer(ADMIN_COMMANDS_TEXT)
+
+@router.message(F.text == "/admin_stats")
+async def admin_user_stats(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+
+    log_user_action(message.from_user.id, "/admin_stats", message.from_user.username)
+    all_sites = get_all_sites(full=True)
+    logs = get_user_logs()
+
+    if not all_sites:
+        return await message.answer("Нет данных по сайтам.")
+
+    users = {}
+    users_with_username = set()
+    for user_id, url, username in all_sites:
+        entry = users.setdefault(user_id, {"sites": [], "username": None})
+        entry["sites"].append(url)
+        if username and not entry["username"]:
+            entry["username"] = username
+        if username:
+            users_with_username.add(user_id)
+
+    user_count = len(users)
+    site_count = len(all_sites)
+    avg_sites = site_count / user_count if user_count else 0
+    max_sites = max(len(data["sites"]) for data in users.values()) if users else 0
+    users_without_username = user_count - len(users_with_username)
+
+    active_users_14d = len({user_id for _, user_id, _, _ in logs})
+    top_users = sorted(users.items(), key=lambda item: len(item[1]["sites"]), reverse=True)[:10]
+
+    top_lines = []
+    for idx, (user_id, data) in enumerate(top_users, start=1):
+        username = f" (@{data['username']})" if data["username"] else ""
+        top_lines.append(f"{idx}. {user_id}{username} — {len(data['sites'])} сайтов")
+
+    text = (
+        "📊 Статистика пользователей:\n"
+        f"Пользователей с сайтами: {user_count}\n"
+        f"Всего сайтов: {site_count}\n"
+        f"Среднее сайтов на пользователя: {avg_sites:.2f}\n"
+        f"Максимум сайтов у одного пользователя: {max_sites}\n"
+        f"Пользователей без username: {users_without_username}\n"
+        f"Активных пользователей за 14 дней: {active_users_14d}\n\n"
+        "Топ-10 пользователей по числу сайтов:\n"
+        + ("\n".join(top_lines) if top_lines else "нет данных")
+    )
+    await message.answer(text)
+
+@router.message(F.text == "/weekly_all")
+async def weekly_admin_report(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+    log_user_action(message.from_user.id, "/weekly_all", message.from_user.username)
+    report = format_weekly_user_report(
+        get_report_sites(),
+        title="📅 Еженедельный админ-отчёт по всем ресурсам"
+    )
+    for chunk in split_message(report):
+        await message.answer(chunk)
+
+@router.message(F.text == "/status")
+async def admin_status(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+    
+    log_user_action(message.from_user.id, "/status", message.from_user.username)
+    statuses = get_site_statuses()
+    all_sites = get_all_sites(full=True)
+
+    if not statuses or not all_sites:
+        return await message.answer("Нет данных для отображения.")
+
+    status_map = {url: status for url, status in statuses}
+
+    lines = []
+    for user_id, url, username in all_sites:
+        status = status_map.get(url, "Нет данных")
+        user_info = f"{user_id} (@{username})" if username else f"{user_id} (без username)"
+        lines.append(f"{url}: {status} — {user_info}")
+
+    await message.answer("Статусы сайтов:\n" + "\n".join(lines))
+
+@router.message(F.text.startswith("/remove_user"))
+async def admin_remove_user(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) != 2:
+        return await message.answer("Используйте: /remove_user <user_id>")
+
+    try:
+        target_user_id = int(parts[1].strip())
+    except ValueError:
+        return await message.answer("ID пользователя должен быть числом.")
+
+    log_user_action(
+        message.from_user.id,
+        f"/remove_user {target_user_id}",
+        message.from_user.username
+    )
+
+    sites_deleted, logs_deleted = delete_user_data(target_user_id)
+
+    if sites_deleted == 0 and logs_deleted == 0:
+        await message.answer(f"Данные пользователя {target_user_id} не найдены.")
+    else:
+        await message.answer(
+            f"🧹 Пользователь {target_user_id} удалён.\n"
+            f"Удалено сайтов: {sites_deleted}\n"
+            f"Удалено записей логов: {logs_deleted}"
+        )
+
+@router.message(F.text == "/events")
+async def admin_events(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+    log_user_action(message.from_user.id, "/events", message.from_user.username)
+    events = get_event_logs()
+    if not events:
+        await message.answer("Событий нет за последние 14 дней.")
+    else:
+        lines = [f"{ts}: {url} — {msg}" for ts, url, msg in events]
+        max_len = 3500
+        chunk = "События:\n"
+        for line in lines:
+            candidate = f"{chunk}{line}\n"
+            if len(candidate) > max_len:
+                await message.answer(chunk.rstrip())
+                chunk = f"{line}\n"
+            else:
+                chunk = candidate
+        if chunk.strip():
+            await message.answer(chunk.rstrip())
+
+@router.message(F.text == "/logs")
+async def admin_user_logs(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+    log_user_action(message.from_user.id, "/logs", message.from_user.username)
+    logs = get_user_logs()
+    if not logs:
+        return await message.answer("Нет логов действий за последние 14 дней.")
+    lines = [
+        f"{ts}: {user_id} (@{username}) — {action}" if username else f"{ts}: {user_id} (без username) — {action}"
+        for ts, user_id, username, action in logs
+    ]
+    chunk_size = 50
+    for i in range(0, len(lines), chunk_size):
+        part = "\n".join(lines[i:i + chunk_size])
+        await message.answer(part)
+
+@router.message(F.text == "/export_logs")
+async def export_logs_csv(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+    path = export_logs_file()
+    await message.answer_document(types.FSInputFile(path), caption="Экспорт логов действий за 14 дней")
+
+@router.message(F.text == "/export_sites")
+async def export_sites_csv(message: types.Message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return await message.answer("Нет доступа")
+    path = export_sites_file()
+    await message.answer_document(types.FSInputFile(path), caption="Список сайтов с последним статусом")
+
+#@router.message(F.text.startswith("/subdomains"))
+#async def cmd_subdomains(message: types.Message):
+#    log_user_action(message.from_user.id, "/subdomains", message.from_user.username)
+#    parts = message.text.split(" ", 1)
+#    if len(parts) != 2:
+#        return await message.answer("Используйте: /subdomains example.com")
+#
+#    domain = parts[1].strip().lower()
+#    await message.answer(f"🔍 Ищу поддомены для `{domain}`...", parse_mode="Markdown")
+#
+#    subdomains = await find_subdomains(domain)
+#
+#    if not subdomains:
+#        return await message.answer("❌ Поддомены не найдены или произошла ошибка.")
+#
+#    preview = "\n".join(f"• `{s}`" for s in subdomains[:30])
+#    text = f"Найдено {len(subdomains)} поддоменов:\n{preview}"
+#    await message.answer(text, parse_mode="Markdown")
+@router.message(F.text.startswith("/subdomains"))
+async def cmd_subdomains(message: types.Message):
+    log_user_action(message.from_user.id, "/subdomains", message.from_user.username)
+    parts = message.text.split(" ", 1)
+    if len(parts) != 2:
+        return await message.answer("Используйте: /subdomains example.com")
+
+    domain = parts[1].strip().lower()
+    await message.answer(f"🔍 Ищу поддомены для `{domain}`...", parse_mode="Markdown")
+
+    subdomains = await find_subdomains(domain)
+
+    if not subdomains:
+        return await message.answer("❌ Поддомены не найдены или произошла ошибка.")
+
+    if len(subdomains) > 10:
+        path = await export_subdomains_csv(subdomains, domain)
+        await message.answer_document(types.FSInputFile(path), caption=f"📄 Найдено {len(subdomains)} поддоменов для {domain}")
+        os.remove(path)
+    else:
+        preview = "\n".join(f"• `{s}`" for s in subdomains)
+        await message.answer(f"🔍 Найдено {len(subdomains)} поддоменов:\n{preview}", parse_mode="Markdown")
+
+
+# Обработчик, не мешающий командам
+#@router.message(F.text)
+#async def universal_add(message: types.Message):
+#    text = message.text.strip()
+#    if text.startswith("/"):
+#        return
+#    if "." in text and " " not in text:
+#        await process_site_input(
+#            message.from_user.id,
+#            message.from_user.username,
+#            text,
+#            message.bot
+#        )
+#
+#def register_handlers(dp, bot):
+#    dp.include_router(router)
+
+@router.message(F.text)
+async def universal_add(message: types.Message):
+    text = message.text.strip()
+
+    # Игнорируем команды (обрабатываются выше)
+    if text.startswith("/"):
+        return await message.answer(
+            "❓ Неизвестная команда. Попробуйте /help для списка доступных.",
+            parse_mode="Markdown"
+        )
+
+    # Проверка на похожесть на домен
+    if "." in text and " " not in text:
+        return await process_site_input(
+            message.from_user.id,
+            message.from_user.username,
+            text,
+            message.bot
+        )
+
+    # Всё остальное — как непонятный текст
+    await message.answer(
+        "🤔 Я не понял это сообщение.\n\n"
+        "📘 Отправьте ссылку на сайт для мониторинга\n"
+        "или используйте /help для списка команд.",
+        parse_mode="Markdown"
+    )
+
+
+def register_handlers(dp, bot):
+    dp.include_router(router)

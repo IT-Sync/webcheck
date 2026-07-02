@@ -1,0 +1,1 @@
+"""Webcheck bot application package."""
