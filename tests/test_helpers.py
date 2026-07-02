@@ -19,8 +19,10 @@ from callback_data import (
 )
 from url_utils import normalize_url
 from status_formatter import (
+    format_domain_expiry_alert,
     format_down_alert,
     format_recovery_alert,
+    format_ssl_expiry_alert,
     format_status_text,
     format_weekly_user_report,
     split_message,
@@ -131,6 +133,26 @@ class StatusFormatterTest(unittest.TestCase):
         self.assertIn("Простой:", alert)
         self.assertIn("HTTP: 200", alert)
         self.assertIn("Время ответа: 184 мс", alert)
+
+    def test_ssl_expiry_alert_contains_resource_url(self):
+        alert = format_ssl_expiry_alert("https://api.example.com/health", 7)
+
+        self.assertIn("SSL истекает через 7 дней", alert)
+        self.assertIn("Ресурс: api.example.com", alert)
+        self.assertIn("URL: https://api.example.com/health", alert)
+
+    def test_domain_expiry_alert_contains_resource_url(self):
+        alert = format_domain_expiry_alert(
+            "https://example.com",
+            7,
+            registrar="Example Registrar",
+            contact_url="https://registrar.example",
+        )
+
+        self.assertIn("Домен истекает через 7 дней", alert)
+        self.assertIn("Ресурс: example.com", alert)
+        self.assertIn("URL: https://example.com", alert)
+        self.assertIn("Example Registrar", alert)
 
     def test_weekly_report_summarizes_resources(self):
         report = format_weekly_user_report([

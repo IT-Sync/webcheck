@@ -123,6 +123,30 @@ def format_recovery_alert(url, http_details, incident_started_at=None, display_n
     )
 
 
+def format_ssl_expiry_alert(url, ssl_days, display_name=None):
+    name = display_name or resource_name(url)
+    return (
+        f"⚠️ SSL истекает через {ssl_days} дней\n\n"
+        f"Ресурс: {name}\n"
+        f"URL: {url}"
+    )
+
+
+def format_domain_expiry_alert(url, domain_days, registrar=None, contact_url=None, display_name=None):
+    name = display_name or resource_name(url)
+    lines = [
+        f"⚠️ Домен истекает через {domain_days} дней",
+        "",
+        f"Ресурс: {name}",
+        f"URL: {url}",
+    ]
+    if registrar:
+        lines.append(f"Регистратор: {registrar}")
+    if contact_url:
+        lines.append(f"Сайт регистратора: {contact_url}")
+    return "\n".join(lines)
+
+
 def status_has_problem(status):
     if not status:
         return True

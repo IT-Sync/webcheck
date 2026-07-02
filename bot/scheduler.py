@@ -8,8 +8,9 @@ from db import (
 from db import get_site_flags_by_id, set_site_flags_by_id
 from monitor import check_http_details, check_ssl, check_domain_expiry
 from status_formatter import (
-    format_down_alert, format_recovery_alert, format_status_text,
-    format_weekly_user_report, group_rows_by_user, split_message
+    format_domain_expiry_alert, format_down_alert, format_recovery_alert,
+    format_ssl_expiry_alert, format_status_text, format_weekly_user_report,
+    group_rows_by_user, split_message
 )
 from callback_data import site_check_now_callback, site_history_callback, site_pause_1h_callback
 from datetime import datetime
@@ -145,7 +146,7 @@ async def process_site(bot, site_row):
         # SSL
         if 0 <= ssl_days <= 14:
             if (not notified_ssl) or (not last_ssl_ts or (now - last_ssl_ts).days >= 1):
-                issues.append(f"⚠️ SSL истекает через {ssl_days} дней")
+                issues.append(format_ssl_expiry_alert(url, ssl_days))
                 log_event(url, f"Сертификат истекает через {ssl_days} дней")
                 set_site_flags_by_id(site_id, ssl=True, ssl_ts=now)
         else:
@@ -161,7 +162,7 @@ async def process_site(bot, site_row):
         # Domain
         if 0 <= domain_days <= 14:
             if (not notified_domain) or (not last_domain_ts or (now - last_domain_ts).days >= 1):
-                issues.append(f"⚠️ Домен истекает через {domain_days} дней")
+                issues.append(format_domain_expiry_alert(url, domain_days, registrar, contact_url))
                 log_event(url, f"Домен истекает через {domain_days} дней")
                 set_site_flags_by_id(site_id, domain=True, domain_ts=now)
         else:
