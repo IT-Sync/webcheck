@@ -98,12 +98,17 @@ async def process_site(bot, site_row):
         update_site_status_by_id(site_id, status)
 
         issues = []
+        notification_flags = {}
 
         # HTTP
         if not http_ok:
             new_fail_count = http_fail_count + 1
             incident_started_at = start_site_incident(site_id, now, http_details.get("ip"))
-            if not notified_http and new_fail_count >= HTTP_FAILURE_THRESHOLD:
+            should_notify_http = (
+                new_fail_count >= HTTP_FAILURE_THRESHOLD and
+                not notified_http
+            )
+            if should_notify_http:
                 issues.append(format_down_alert(
                     url,
                     http_details,
@@ -113,7 +118,9 @@ async def process_site(bot, site_row):
                 ))
                 reason = http_details.get("error") or "нет успешного ответа"
                 log_event(url, f"Сайт недоступен ({new_fail_count} подряд провалов): {reason}")
-                set_site_flags_by_id(site_id, http=True, http_fail_count=new_fail_count)
+                set_site_flags_by_id(site_id, http_fail_count=new_fail_count)
+                notification_flags["http"] = True
+                notification_flags["http_ts"] = now
             else:
                 set_site_flags_by_id(site_id, http_fail_count=new_fail_count)
         elif http_ok and notified_http:
@@ -133,7 +140,7 @@ async def process_site(bot, site_row):
                 latency_ms=http_details.get("latency_ms"),
                 resolved_ip=http_details.get("ip")
             )
-            set_site_flags_by_id(site_id, http=False, http_fail_count=0)
+            set_site_flags_by_id(site_id, http=False, http_ts=None, http_fail_count=0)
         else:
             if incident_started_at:
                 clear_site_incident(site_id)
@@ -151,7 +158,8 @@ async def process_site(bot, site_row):
             if (not notified_ssl) or (not last_ssl_ts or (now - last_ssl_ts).days >= 1):
                 issues.append(format_ssl_expiry_alert(url, ssl_days))
                 log_event(url, f"Сертификат истекает через {ssl_days} дней")
-                set_site_flags_by_id(site_id, ssl=True, ssl_ts=now)
+                notification_flags["ssl"] = True
+                notification_flags["ssl_ts"] = now
         else:
             if notified_ssl:
                 try:
@@ -167,7 +175,8 @@ async def process_site(bot, site_row):
             if (not notified_domain) or (not last_domain_ts or (now - last_domain_ts).days >= 1):
                 issues.append(format_domain_expiry_alert(url, domain_days, registrar, contact_url))
                 log_event(url, f"Домен истекает через {domain_days} дней")
-                set_site_flags_by_id(site_id, domain=True, domain_ts=now)
+                notification_flags["domain"] = True
+                notification_flags["domain_ts"] = now
         else:
             if notified_domain:
                 try:
@@ -184,6 +193,12 @@ async def process_site(bot, site_row):
                 await bot.send_message(user_id, text, reply_markup=build_incident_keyboard(site_id))
             except TelegramForbiddenError:
                 await notify_block(bot, user_id, url)
+                return
+            except Exception as e:
+                log_event(url, f"Не удалось отправить уведомление пользователю {user_id}: {type(e).__name__}: {e}")
+                return
+            if notification_flags:
+                set_site_flags_by_id(site_id, **notification_flags)
 
     except TelegramForbiddenError:
         await notify_block(bot, user_id, url)

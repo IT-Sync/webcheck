@@ -315,6 +315,46 @@ def get_admin_message_stats(days=14):
         for offset in range(days)
     ]
 
+def get_admin_command_stats(days=14, limit=12):
+    c.execute("""
+        SELECT split_part(action, ' ', 1) AS command,
+               COUNT(*) AS total,
+               COUNT(DISTINCT user_id) AS users
+        FROM user_logs
+        WHERE created_at > %s
+          AND action LIKE '/%'
+        GROUP BY command
+        ORDER BY total DESC, command
+        LIMIT %s
+    """, (datetime.utcnow() - timedelta(days=days), limit))
+    return [
+        {
+            "command": row[0],
+            "total": row[1],
+            "users": row[2],
+        }
+        for row in c.fetchall()
+    ]
+
+def get_admin_bot_response_stats(days=14):
+    c.execute("""
+        SELECT source,
+               COUNT(*) FILTER (WHERE status = 'sent') AS sent,
+               COUNT(*) FILTER (WHERE status <> 'sent') AS failed
+        FROM bot_messages
+        WHERE created_at > %s
+        GROUP BY source
+        ORDER BY sent DESC, failed DESC, source
+    """, (datetime.utcnow() - timedelta(days=days),))
+    return [
+        {
+            "source": row[0],
+            "sent": row[1] or 0,
+            "failed": row[2] or 0,
+        }
+        for row in c.fetchall()
+    ]
+
 def get_admin_sites(user_id=None):
     params = [datetime.utcnow()]
     where = ""
@@ -518,7 +558,8 @@ def export_sites_csv():
 
 def get_site_flags(url):
     c.execute("""
-        SELECT notified_http, notified_ssl, notified_domain, 
+        SELECT notified_http, notified_http_ts,
+               notified_ssl, notified_domain, 
                notified_ssl_ts, notified_domain_ts,
                domain_last_checked, domain_last_days,
                domain_last_registrar, domain_last_contact_url,
@@ -530,20 +571,22 @@ def get_site_flags(url):
         return {}
     return {
         "http": bool(row[0]),
-        "ssl": bool(row[1]),
-        "domain": bool(row[2]),
-        "ssl_ts": row[3],
-        "domain_ts": row[4],
-        "domain_check_ts": row[5],
-        "domain_days_cache": row[6],
-        "domain_registrar_cache": row[7],
-        "domain_contact_url_cache": row[8],
-        "http_fail_count": row[9] or 0,
+        "http_ts": row[1],
+        "ssl": bool(row[2]),
+        "domain": bool(row[3]),
+        "ssl_ts": row[4],
+        "domain_ts": row[5],
+        "domain_check_ts": row[6],
+        "domain_days_cache": row[7],
+        "domain_registrar_cache": row[8],
+        "domain_contact_url_cache": row[9],
+        "http_fail_count": row[10] or 0,
     }
 
 def get_site_flags_by_id(site_id):
     c.execute("""
-        SELECT notified_http, notified_ssl, notified_domain,
+        SELECT notified_http, notified_http_ts,
+               notified_ssl, notified_domain,
                notified_ssl_ts, notified_domain_ts,
                domain_last_checked, domain_last_days,
                domain_last_registrar, domain_last_contact_url,
@@ -555,20 +598,22 @@ def get_site_flags_by_id(site_id):
         return {}
     return {
         "http": bool(row[0]),
-        "ssl": bool(row[1]),
-        "domain": bool(row[2]),
-        "ssl_ts": row[3],
-        "domain_ts": row[4],
-        "domain_check_ts": row[5],
-        "domain_days_cache": row[6],
-        "domain_registrar_cache": row[7],
-        "domain_contact_url_cache": row[8],
-        "http_fail_count": row[9] or 0,
+        "http_ts": row[1],
+        "ssl": bool(row[2]),
+        "domain": bool(row[3]),
+        "ssl_ts": row[4],
+        "domain_ts": row[5],
+        "domain_check_ts": row[6],
+        "domain_days_cache": row[7],
+        "domain_registrar_cache": row[8],
+        "domain_contact_url_cache": row[9],
+        "http_fail_count": row[10] or 0,
     }
 
 def set_site_flags(
     url,
     http=UNSET,
+    http_ts=UNSET,
     ssl=UNSET,
     domain=UNSET,
     ssl_ts=UNSET,
@@ -585,6 +630,9 @@ def set_site_flags(
     if http is not UNSET:
         updates.append("notified_http = %s")
         values.append(http)
+    if http_ts is not UNSET:
+        updates.append("notified_http_ts = %s")
+        values.append(http_ts)
     if ssl is not UNSET:
         updates.append("notified_ssl = %s")
         values.append(ssl)
@@ -624,6 +672,7 @@ def set_site_flags(
 def set_site_flags_by_id(
     site_id,
     http=UNSET,
+    http_ts=UNSET,
     ssl=UNSET,
     domain=UNSET,
     ssl_ts=UNSET,
@@ -640,6 +689,9 @@ def set_site_flags_by_id(
     if http is not UNSET:
         updates.append("notified_http = %s")
         values.append(http)
+    if http_ts is not UNSET:
+        updates.append("notified_http_ts = %s")
+        values.append(http_ts)
     if ssl is not UNSET:
         updates.append("notified_ssl = %s")
         values.append(ssl)
@@ -704,6 +756,11 @@ def migrate_add_notification_flags():
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                            WHERE table_name='sites' AND column_name='notified_http') THEN
                 ALTER TABLE sites ADD COLUMN notified_http BOOLEAN DEFAULT FALSE;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='notified_http_ts') THEN
+                ALTER TABLE sites ADD COLUMN notified_http_ts TIMESTAMP;
             END IF;
 
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns

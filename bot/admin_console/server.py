@@ -10,6 +10,8 @@ from aiogram.exceptions import TelegramForbiddenError
 from bot.infra.db import (
     admin_delete_site_by_id,
     delete_user_data,
+    get_admin_bot_response_stats,
+    get_admin_command_stats,
     get_admin_message_stats,
     get_admin_sites,
     get_admin_stats,
@@ -287,6 +289,8 @@ async def dashboard(request: web.Request) -> web.Response:
     stats = get_admin_stats()
     usage_stats = get_admin_usage_stats()
     message_stats = get_admin_message_stats()
+    command_stats = get_admin_command_stats()
+    response_stats = get_admin_bot_response_stats()
     recent_logs = get_user_logs()[:10]
     recent_events = get_event_logs()[:10]
     metrics = [
@@ -309,6 +313,14 @@ async def dashboard(request: web.Request) -> web.Response:
         f"<tr><td>{fmt_dt(ts)}</td><td>{esc(url)}</td><td>{esc(message)}</td></tr>"
         for ts, url, message in recent_events
     ) or '<tr><td colspan="3">Событий нет</td></tr>'
+    commands_html = "".join(
+        f"<tr><td><code>{esc(row['command'])}</code></td><td>{row['total']}</td><td>{row['users']}</td></tr>"
+        for row in command_stats
+    ) or '<tr><td colspan="3">Команд пока нет</td></tr>'
+    responses_html = "".join(
+        f"<tr><td>{esc(row['source'])}</td><td>{row['sent']}</td><td>{row['failed']}</td></tr>"
+        for row in response_stats
+    ) or '<tr><td colspan="3">Ответов пока нет</td></tr>'
     body = f"""
 <h2>Обзор</h2>
 <div class="grid">{metric_html}</div>
@@ -320,6 +332,16 @@ async def dashboard(request: web.Request) -> web.Response:
   <section>
     <h2>Сообщения бота</h2>
     {bar_chart(message_stats, "sent", "Отправленные сообщения", "Отправленных сообщений пока нет")}
+  </section>
+</div>
+<div class="split" style="margin-bottom:24px">
+  <section>
+    <h2>Популярные команды</h2>
+    <table><thead><tr><th>Команда</th><th>Вызовов</th><th>Пользователей</th></tr></thead><tbody>{commands_html}</tbody></table>
+  </section>
+  <section>
+    <h2>Ответы бота</h2>
+    <table><thead><tr><th>Тип</th><th>Отправлено</th><th>Ошибок</th></tr></thead><tbody>{responses_html}</tbody></table>
   </section>
 </div>
 <div class="split">
