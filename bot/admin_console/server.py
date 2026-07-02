@@ -2,7 +2,7 @@ import asyncio
 import html
 import os
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from aiohttp import web
 from aiogram.exceptions import TelegramForbiddenError
@@ -457,6 +457,7 @@ async def events(request: web.Request) -> web.Response:
 @require_auth
 async def agents(request: web.Request) -> web.Response:
     rows = await AGENT_REGISTRY.list_agents()
+    disabled_agents = await AGENT_REGISTRY.list_disabled()
     results = await AGENT_REGISTRY.recent_results()
     flash = esc(request.query.get("result", ""))
     flash_html = f'<div class="flash">{flash}</div>' if flash else ""
@@ -486,9 +487,17 @@ async def agents(request: web.Request) -> web.Response:
   <td>{fmt_dt(row['last_seen_at'])}</td>
   <td>{fmt_dt(row['last_result_at'])}</td>
   <td>{esc(row['remote'])}</td>
+  <td><form class="inline" method="post" action="/admin/agents/{quote(row['agent_id'], safe='')}/disable"><button class="danger" type="submit">Отключить</button></form></td>
 </tr>"""
         for row in rows
-    ) or '<tr><td colspan="8">Онлайн-агентов нет</td></tr>'
+    ) or '<tr><td colspan="9">Онлайн-агентов нет</td></tr>'
+    disabled_rows = "".join(
+        f"""<tr>
+  <td><code>{esc(agent_id)}</code></td>
+  <td><form class="inline" method="post" action="/admin/agents/{quote(agent_id, safe='')}/enable"><button type="submit">Включить</button></form></td>
+</tr>"""
+        for agent_id in disabled_agents
+    ) or '<tr><td colspan="2">Отключённых агентов нет</td></tr>'
     result_rows = "".join(
         f"""<tr>
   <td>{fmt_dt(row['received_at'])}</td>
@@ -505,8 +514,13 @@ async def agents(request: web.Request) -> web.Response:
 {flash_html}
 {check_form}
 <table>
-  <thead><tr><th>Agent ID</th><th>Страна</th><th>Регион</th><th>Provider</th><th>Подключён</th><th>Heartbeat</th><th>Результат</th><th>Remote</th></tr></thead>
+  <thead><tr><th>Agent ID</th><th>Страна</th><th>Регион</th><th>Provider</th><th>Подключён</th><th>Heartbeat</th><th>Результат</th><th>Remote</th><th></th></tr></thead>
   <tbody>{table}</tbody>
+</table>
+<h2 style="margin-top:24px">Отключённые агенты</h2>
+<table>
+  <thead><tr><th>Agent ID</th><th></th></tr></thead>
+  <tbody>{disabled_rows}</tbody>
 </table>
 <h2 style="margin-top:24px">Последние результаты</h2>
 <table>
@@ -539,6 +553,20 @@ async def send_agent_check(request: web.Request) -> web.Response:
     except Exception as e:
         raise redirect_agents(f"Не удалось отправить задание: {type(e).__name__}: {e}")
     raise redirect_agents(f"Задание отправлено агенту {agent_id}, job_id={job_id}")
+
+
+@require_auth
+async def disable_agent(request: web.Request) -> web.Response:
+    agent_id = request.match_info["agent_id"]
+    await AGENT_REGISTRY.disable(agent_id)
+    raise redirect_agents(f"Агент {agent_id} отключён")
+
+
+@require_auth
+async def enable_agent(request: web.Request) -> web.Response:
+    agent_id = request.match_info["agent_id"]
+    await AGENT_REGISTRY.enable(agent_id)
+    raise redirect_agents(f"Агент {agent_id} включён. Он подключится при следующей попытке reconnect.")
 
 
 @require_auth
@@ -686,6 +714,8 @@ def create_app(bot) -> web.Application:
     app.router.add_get("/admin/events", events)
     app.router.add_get("/admin/agents", agents)
     app.router.add_post("/admin/agents/check", send_agent_check)
+    app.router.add_post("/admin/agents/{agent_id}/disable", disable_agent)
+    app.router.add_post("/admin/agents/{agent_id}/enable", enable_agent)
     app.router.add_get("/admin/messages", messages)
     app.router.add_post("/admin/messages/send", send_message)
     app.router.add_post("/admin/messages/broadcast", broadcast_message)

@@ -19,6 +19,7 @@ from callback_data import (
 )
 from url_utils import normalize_url
 from status_formatter import (
+    append_agent_results,
     format_domain_expiry_alert,
     format_down_alert,
     format_recovery_alert,
@@ -178,6 +179,29 @@ class StatusFormatterTest(unittest.TestCase):
         chunks = split_message("a\nb\nc", max_len=3)
 
         self.assertEqual(chunks, ["a\nb", "c"])
+
+    def test_agent_results_are_visually_separated(self):
+        text = append_agent_results(
+            "HTTP: OK",
+            [
+                {
+                    "agent_id": "Earth",
+                    "country": "RU",
+                    "region": "Saint-Petersburg",
+                    "http": {
+                        "ok": True,
+                        "status_code": 200,
+                        "method": "HEAD",
+                        "latency_ms": 1117,
+                        "url": "https://example.com",
+                    },
+                }
+            ],
+        )
+
+        self.assertIn("🌍 Проверки агентами", text)
+        self.assertIn("• Earth [RU, Saint-Petersburg]", text)
+        self.assertIn("  HTTP: OK", text)
 
 
 if __name__ == "__main__":

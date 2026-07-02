@@ -24,6 +24,7 @@ class AgentConnection:
 class AgentRegistry:
     def __init__(self):
         self._agents = {}
+        self._disabled_agents = set()
         self._recent_results = []
         self._pending = {}
         self._lock = asyncio.Lock()
@@ -37,6 +38,28 @@ class AgentRegistry:
             self._agents[agent.agent_id] = agent
         if old_ws:
             await old_ws.close(message=b"replaced by new connection")
+
+    async def is_disabled(self, agent_id: str) -> bool:
+        async with self._lock:
+            return agent_id in self._disabled_agents
+
+    async def disable(self, agent_id: str):
+        ws = None
+        async with self._lock:
+            self._disabled_agents.add(agent_id)
+            agent = self._agents.pop(agent_id, None)
+            if agent:
+                ws = agent.ws
+        if ws:
+            await ws.close(message=b"agent disabled by admin")
+
+    async def enable(self, agent_id: str):
+        async with self._lock:
+            self._disabled_agents.discard(agent_id)
+
+    async def list_disabled(self):
+        async with self._lock:
+            return sorted(self._disabled_agents)
 
     async def unregister(self, agent_id: str, ws=None):
         async with self._lock:

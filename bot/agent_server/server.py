@@ -46,6 +46,11 @@ async def agents_ws(request: web.Request) -> web.WebSocketResponse:
             await ws.close()
             return ws
 
+        if await AGENT_REGISTRY.is_disabled(agent_id):
+            await ws.send_json({"type": "agent.disabled", "agent_id": agent_id})
+            await ws.close(message=b"agent disabled")
+            return ws
+
         agent = AgentConnection(
             agent_id=agent_id,
             country=str(hello.get("country") or "unknown"),

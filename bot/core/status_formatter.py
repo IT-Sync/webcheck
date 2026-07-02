@@ -41,7 +41,7 @@ def format_http_line(http_details):
         if latency_ms is not None:
             parts.append(f"{latency_ms} ms")
         if checked_url:
-            parts.append(f"через {checked_url}")
+            parts.append(checked_url)
         return " | ".join(parts)
 
     error = http_details.get("error") or "нет успешного ответа"
@@ -85,18 +85,19 @@ def format_agent_result_line(result):
     location = f"{country}, {region}" if region else country
     error = result.get("error")
     http = result.get("http")
+    header = f"• {agent_id} [{location}]"
     if error:
-        return f"{agent_id} ({location}): DOWN | {error}"
+        return f"{header}\n  HTTP: DOWN | {error}"
     if http:
-        return f"{agent_id} ({location}): {format_http_line(http)}"
+        return f"{header}\n  {format_http_line(http)}"
     status = "OK" if result.get("ok") else "DOWN"
-    return f"{agent_id} ({location}): {status}"
+    return f"{header}\n  HTTP: {status}"
 
 
 def format_agent_results(agent_results):
     if not agent_results:
         return ""
-    lines = ["Проверки агентами:"]
+    lines = ["", "🌍 Проверки агентами"]
     lines.extend(format_agent_result_line(result) for result in agent_results)
     return "\n".join(lines)
 
@@ -105,7 +106,7 @@ def append_agent_results(text, agent_results):
     agent_text = format_agent_results(agent_results)
     if not agent_text:
         return text
-    return f"{text}\n{agent_text}"
+    return f"{text}{agent_text}"
 
 
 def format_user_status_message(url, http_details, ssl_days, domain_days, registrar=None, contact_url=None, agent_results=None):
