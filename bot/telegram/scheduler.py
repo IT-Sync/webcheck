@@ -123,7 +123,10 @@ async def process_site(bot, site_row):
                 notification_flags["http_ts"] = now
             else:
                 set_site_flags_by_id(site_id, http_fail_count=new_fail_count)
-        elif http_ok and notified_http:
+        elif http_ok and (
+            notified_http or
+            (incident_started_at and http_fail_count >= HTTP_FAILURE_THRESHOLD)
+        ):
             try:
                 await bot.send_message(
                     user_id,
