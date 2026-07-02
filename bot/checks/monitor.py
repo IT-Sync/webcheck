@@ -117,7 +117,8 @@ async def check_http_details(url, retries=3, delay=5):
                     last_error = error_text or type(e).__name__
                     print(f"[Attempt {attempt}] Error checking {current_url}: {error_text or type(e).__name__}")
 
-            await asyncio.sleep(delay * attempt)
+            if attempt < retries:
+                await asyncio.sleep(delay * attempt)
 
     return {
         "ok": False,
