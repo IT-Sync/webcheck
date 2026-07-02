@@ -666,15 +666,16 @@ async def admin_remove_user(message: types.Message):
         message.from_user.username
     )
 
-    sites_deleted, logs_deleted = delete_user_data(target_user_id)
+    sites_deleted, logs_deleted, messages_deleted = delete_user_data(target_user_id)
 
-    if sites_deleted == 0 and logs_deleted == 0:
+    if sites_deleted == 0 and logs_deleted == 0 and messages_deleted == 0:
         await message.answer(f"Данные пользователя {target_user_id} не найдены.")
     else:
         await message.answer(
             f"🧹 Пользователь {target_user_id} удалён.\n"
             f"Удалено сайтов: {sites_deleted}\n"
-            f"Удалено записей логов: {logs_deleted}"
+            f"Удалено записей логов: {logs_deleted}\n"
+            f"Удалено записей сообщений: {messages_deleted}"
         )
 
 @router.message(F.text == "/events")

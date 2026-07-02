@@ -10,12 +10,16 @@ from aiogram.exceptions import TelegramForbiddenError
 from bot.infra.db import (
     admin_delete_site_by_id,
     delete_user_data,
+    get_admin_message_stats,
     get_admin_sites,
     get_admin_stats,
+    get_admin_usage_stats,
+    get_admin_user,
     get_admin_users,
     get_event_logs,
     get_site_by_id,
     get_user_logs,
+    log_bot_message,
     log_user_action,
     set_site_paused_by_id,
 )
@@ -43,6 +47,25 @@ def fmt_dt(value) -> str:
 
 def redirect_messages(result: str) -> web.HTTPFound:
     return web.HTTPFound("/admin/messages?" + urlencode({"result": result}))
+
+
+def bar_chart(rows, value_key: str, label: str, empty_text: str = "Данных пока нет") -> str:
+    max_value = max((row.get(value_key, 0) for row in rows), default=0)
+    if max_value <= 0:
+        return f'<div class="panel muted">{empty_text}</div>'
+    bars = []
+    for row in rows:
+        value = row.get(value_key, 0)
+        height = max(4, int((value / max_value) * 120)) if value else 4
+        date_label = row["date"].strftime("%d.%m")
+        bars.append(
+            f"""<div class="bar-item" title="{esc(date_label)}: {value}">
+  <div class="bar-value">{value}</div>
+  <div class="bar" style="height:{height}px"></div>
+  <div class="bar-label">{esc(date_label)}</div>
+</div>"""
+        )
+    return f'<div class="chart" aria-label="{esc(label)}">{"".join(bars)}</div>'
 
 
 def is_authenticated(request: web.Request) -> bool:
@@ -167,6 +190,28 @@ def page(title: str, body: str, active: str = "") -> web.Response:
     .status-bad {{ color: var(--danger); font-weight: 650; }}
     .flash {{ margin-bottom: 16px; padding: 12px 14px; background: #e8f4f8; border: 1px solid #b7d8e3; border-radius: 8px; }}
     .split {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }}
+    .chart {{
+      min-height: 190px;
+      display: flex;
+      align-items: end;
+      gap: 8px;
+      padding: 14px 10px 8px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow-x: auto;
+    }}
+    .bar-item {{ min-width: 44px; display: grid; gap: 5px; justify-items: center; align-items: end; }}
+    .bar {{
+      width: 28px;
+      border-radius: 5px 5px 0 0;
+      background: var(--accent);
+    }}
+    .bar-value {{ font-size: 12px; color: #34414d; }}
+    .bar-label {{ font-size: 11px; color: var(--muted); white-space: nowrap; }}
+    .user-head {{ display: flex; justify-content: space-between; align-items: start; gap: 16px; margin-bottom: 16px; }}
+    .user-head h2 {{ margin-bottom: 4px; }}
+    .subline {{ color: var(--muted); }}
     @media (max-width: 720px) {{
       header, nav {{ padding-left: 14px; padding-right: 14px; }}
       main {{ padding: 16px 12px; }}
@@ -241,6 +286,8 @@ async def admin_root(request: web.Request) -> web.Response:
 @require_auth
 async def dashboard(request: web.Request) -> web.Response:
     stats = get_admin_stats()
+    usage_stats = get_admin_usage_stats()
+    message_stats = get_admin_message_stats()
     recent_logs = get_user_logs()[:10]
     recent_events = get_event_logs()[:10]
     metrics = [
@@ -251,6 +298,8 @@ async def dashboard(request: web.Request) -> web.Response:
         ("Активных за 14 дней", stats["active_users_14d"]),
         ("Логов за 14 дней", stats["logs_14d"]),
         ("Событий за 14 дней", stats["events_14d"]),
+        ("Сообщений отправлено", stats["sent_messages_14d"]),
+        ("Ошибок отправки", stats["failed_messages_14d"]),
     ]
     metric_html = "".join(f'<div class="metric"><strong>{value}</strong><span>{label}</span></div>' for label, value in metrics)
     logs_html = "".join(
@@ -264,6 +313,16 @@ async def dashboard(request: web.Request) -> web.Response:
     body = f"""
 <h2>Обзор</h2>
 <div class="grid">{metric_html}</div>
+<div class="split" style="margin-bottom:24px">
+  <section>
+    <h2>Действия пользователей</h2>
+    {bar_chart(usage_stats, "actions", "Действия пользователей")}
+  </section>
+  <section>
+    <h2>Сообщения бота</h2>
+    {bar_chart(message_stats, "sent", "Отправленные сообщения", "Отправленных из web-консоли сообщений пока нет")}
+  </section>
+</div>
 <div class="split">
   <section>
     <h2>Последние логи</h2>
@@ -302,8 +361,11 @@ async def users(request: web.Request) -> web.Response:
 @require_auth
 async def user_detail(request: web.Request) -> web.Response:
     user_id = int(request.match_info["user_id"])
+    profile = get_admin_user(user_id)
     sites = get_admin_sites(user_id=user_id)
     logs = [row for row in get_user_logs() if row[1] == user_id][:30]
+    username = profile.get("username")
+    title = f"@{username}" if username else "без username"
     site_rows = "".join(
         f"""<tr>
   <td>{esc(site['url'])}</td>
@@ -322,10 +384,15 @@ async def user_detail(request: web.Request) -> web.Response:
         for ts, _, username, action in logs
     ) or '<tr><td colspan="3">Логов нет</td></tr>'
     body = f"""
-<h2>Пользователь <code>{user_id}</code></h2>
-<div class="actions" style="margin-bottom:16px">
-  <a class="button" href="/admin/messages?user_id={user_id}">Отправить сообщение</a>
-  <form class="inline" method="post" action="/admin/users/{user_id}/delete"><button class="danger" type="submit">Удалить данные пользователя</button></form>
+<div class="user-head">
+  <div>
+    <h2>{esc(title)}</h2>
+    <div class="subline">User ID: <code>{user_id}</code> · сайтов: {profile.get("site_count", 0)} · последнее действие: {fmt_dt(profile.get("last_action_at"))}</div>
+  </div>
+  <div class="actions">
+    <a class="button" href="/admin/messages?user_id={user_id}">Отправить сообщение</a>
+    <form class="inline" method="post" action="/admin/users/{user_id}/delete"><button class="danger" type="submit">Удалить данные пользователя</button></form>
+  </div>
 </div>
 <h2>Сайты</h2>
 <table><thead><tr><th>URL</th><th>Статус</th><th>Проверка</th><th>Последний результат</th><th></th></tr></thead><tbody>{site_rows}</tbody></table>
@@ -400,7 +467,12 @@ async def send_message(request: web.Request) -> web.Response:
     try:
         await bot.send_message(user_id, text)
     except TelegramForbiddenError:
+        log_bot_message(user_id, "web-direct", "forbidden", "TelegramForbiddenError")
         raise redirect_messages("Пользователь заблокировал бота")
+    except Exception as e:
+        log_bot_message(user_id, "web-direct", "failed", str(e)[:240])
+        raise redirect_messages(f"Ошибка отправки: {type(e).__name__}")
+    log_bot_message(user_id, "web-direct", "sent")
     log_user_action(BOT_OWNER_ID, f"web: отправил сообщение пользователю {user_id}", "web-admin")
     raise redirect_messages("Сообщение отправлено")
 
@@ -420,11 +492,14 @@ async def broadcast_message(request: web.Request) -> web.Response:
     for user in users:
         try:
             await bot.send_message(user["user_id"], text)
+            log_bot_message(user["user_id"], "web-broadcast", "sent")
             sent += 1
             await asyncio.sleep(0.04)
         except TelegramForbiddenError:
+            log_bot_message(user["user_id"], "web-broadcast", "forbidden", "TelegramForbiddenError")
             failed += 1
-        except Exception:
+        except Exception as e:
+            log_bot_message(user["user_id"], "web-broadcast", "failed", str(e)[:240])
             failed += 1
     log_user_action(BOT_OWNER_ID, f"web: массовая отправка, успешно {sent}, ошибок {failed}", "web-admin")
     raise redirect_messages(f"Массовая отправка завершена: успешно {sent}, ошибок {failed}")
@@ -433,8 +508,12 @@ async def broadcast_message(request: web.Request) -> web.Response:
 @require_auth
 async def delete_user(request: web.Request) -> web.Response:
     user_id = int(request.match_info["user_id"])
-    sites_deleted, logs_deleted = delete_user_data(user_id)
-    log_user_action(BOT_OWNER_ID, f"web: удалил пользователя {user_id}, сайтов {sites_deleted}, логов {logs_deleted}", "web-admin")
+    sites_deleted, logs_deleted, messages_deleted = delete_user_data(user_id)
+    log_user_action(
+        BOT_OWNER_ID,
+        f"web: удалил пользователя {user_id}, сайтов {sites_deleted}, логов {logs_deleted}, сообщений {messages_deleted}",
+        "web-admin"
+    )
     raise web.HTTPFound("/admin/users")
 
 

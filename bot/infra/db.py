@@ -39,6 +39,15 @@ c.execute('''CREATE TABLE IF NOT EXISTS user_logs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )''')
 
+c.execute('''CREATE TABLE IF NOT EXISTS bot_messages (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT,
+    source TEXT,
+    status TEXT,
+    error TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)''')
+
 conn.commit()
 
 # Методы
@@ -149,8 +158,10 @@ def delete_user_data(user_id):
     sites_deleted = c.rowcount
     c.execute("DELETE FROM user_logs WHERE user_id = %s", (user_id,))
     logs_deleted = c.rowcount
+    c.execute("DELETE FROM bot_messages WHERE user_id = %s", (user_id,))
+    messages_deleted = c.rowcount
     conn.commit()
-    return sites_deleted, logs_deleted
+    return sites_deleted, logs_deleted, messages_deleted
 
 def get_all_sites(full=False):
     if full:
@@ -188,6 +199,42 @@ def get_admin_users():
         for row in c.fetchall()
     ]
 
+def get_admin_user(user_id):
+    c.execute("""
+        SELECT
+            user_id,
+            MAX(username) FILTER (WHERE username IS NOT NULL AND username <> '') AS username,
+            COUNT(*) FILTER (WHERE source = 'site') AS site_count,
+            MAX(last_checked) AS last_checked,
+            MAX(last_action_at) AS last_action_at
+        FROM (
+            SELECT user_id, username, 'site' AS source, last_checked, NULL::timestamp AS last_action_at
+            FROM sites
+            WHERE user_id = %s
+            UNION ALL
+            SELECT user_id, username, 'log' AS source, NULL::timestamp AS last_checked, created_at AS last_action_at
+            FROM user_logs
+            WHERE user_id = %s
+        ) rows
+        GROUP BY user_id
+    """, (user_id, user_id))
+    row = c.fetchone()
+    if not row:
+        return {
+            "user_id": user_id,
+            "username": None,
+            "site_count": 0,
+            "last_checked": None,
+            "last_action_at": None,
+        }
+    return {
+        "user_id": row[0],
+        "username": row[1],
+        "site_count": row[2],
+        "last_checked": row[3],
+        "last_action_at": row[4],
+    }
+
 def get_admin_stats():
     c.execute("SELECT COUNT(DISTINCT user_id), COUNT(*) FROM sites")
     users_with_sites, site_count = c.fetchone()
@@ -208,6 +255,14 @@ def get_admin_stats():
     active_sites, paused_sites = c.fetchone()
     c.execute("SELECT COUNT(*) FROM events WHERE created_at > %s", (datetime.utcnow() - timedelta(days=14),))
     events_14d = c.fetchone()[0]
+    c.execute("""
+        SELECT
+            COUNT(*) FILTER (WHERE status = 'sent'),
+            COUNT(*) FILTER (WHERE status <> 'sent')
+        FROM bot_messages
+        WHERE created_at > %s
+    """, (datetime.utcnow() - timedelta(days=14),))
+    sent_messages_14d, failed_messages_14d = c.fetchone()
     return {
         "users_with_sites": users_with_sites or 0,
         "site_count": site_count or 0,
@@ -216,7 +271,49 @@ def get_admin_stats():
         "active_users_14d": active_users_14d or 0,
         "logs_14d": logs_14d or 0,
         "events_14d": events_14d or 0,
+        "sent_messages_14d": sent_messages_14d or 0,
+        "failed_messages_14d": failed_messages_14d or 0,
     }
+
+def get_admin_usage_stats(days=14):
+    since = datetime.utcnow().date() - timedelta(days=days - 1)
+    c.execute("""
+        SELECT created_at::date, COUNT(*), COUNT(DISTINCT user_id)
+        FROM user_logs
+        WHERE created_at::date >= %s
+        GROUP BY created_at::date
+        ORDER BY created_at::date
+    """, (since,))
+    rows = {row[0]: {"actions": row[1], "users": row[2]} for row in c.fetchall()}
+    return [
+        {
+            "date": since + timedelta(days=offset),
+            "actions": rows.get(since + timedelta(days=offset), {}).get("actions", 0),
+            "users": rows.get(since + timedelta(days=offset), {}).get("users", 0),
+        }
+        for offset in range(days)
+    ]
+
+def get_admin_message_stats(days=14):
+    since = datetime.utcnow().date() - timedelta(days=days - 1)
+    c.execute("""
+        SELECT created_at::date,
+               COUNT(*) FILTER (WHERE status = 'sent'),
+               COUNT(*) FILTER (WHERE status <> 'sent')
+        FROM bot_messages
+        WHERE created_at::date >= %s
+        GROUP BY created_at::date
+        ORDER BY created_at::date
+    """, (since,))
+    rows = {row[0]: {"sent": row[1] or 0, "failed": row[2] or 0} for row in c.fetchall()}
+    return [
+        {
+            "date": since + timedelta(days=offset),
+            "sent": rows.get(since + timedelta(days=offset), {}).get("sent", 0),
+            "failed": rows.get(since + timedelta(days=offset), {}).get("failed", 0),
+        }
+        for offset in range(days)
+    ]
 
 def get_admin_sites(user_id=None):
     params = [datetime.utcnow()]
@@ -358,6 +455,13 @@ def admin_delete_site(user_id, url):
 
 def log_user_action(user_id, action, username=None):
     c.execute("INSERT INTO user_logs (user_id, username, action) VALUES (%s, %s, %s)", (user_id, username, action))
+    conn.commit()
+
+def log_bot_message(user_id, source, status="sent", error=None):
+    c.execute(
+        "INSERT INTO bot_messages (user_id, source, status, error) VALUES (%s, %s, %s, %s)",
+        (user_id, source, status, error)
+    )
     conn.commit()
 
 def get_user_logs():
@@ -688,5 +792,7 @@ def migrate_add_notification_flags():
     c.execute("CREATE INDEX IF NOT EXISTS idx_sites_url ON sites(url)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_user_logs_created_at ON user_logs(created_at)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_bot_messages_created_at ON bot_messages(created_at)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_bot_messages_user_id ON bot_messages(user_id)")
 
     conn.commit()
