@@ -6,9 +6,11 @@ from bot.infra.db import (
     start_site_incident, clear_site_incident
 )
 from bot.infra.db import get_site_flags_by_id, set_site_flags_by_id
+from bot.agent_server.checks import check_with_agents
 from bot.checks.monitor import check_domain_expiry
 from bot.checks.service import check_resource
 from bot.core.status_formatter import (
+    append_agent_results,
     format_domain_expiry_alert, format_down_alert, format_recovery_alert,
     format_ssl_expiry_alert, format_status_text, format_weekly_user_report,
     group_rows_by_user, split_message
@@ -95,6 +97,8 @@ async def process_site(bot, site_row):
             contact_url = cached_contact_url
 
         status = format_status_text(http_details, ssl_days, domain_days, registrar, contact_url)
+        agent_results = await check_with_agents(url, checks=["http"])
+        status = append_agent_results(status, agent_results)
         update_site_status_by_id(site_id, status)
 
         issues = []

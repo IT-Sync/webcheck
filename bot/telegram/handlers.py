@@ -12,6 +12,7 @@ from bot.infra.db import (
     admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
     set_site_paused_until_by_id, get_site_pause_status
 )
+from bot.agent_server.checks import check_with_agents
 from bot.checks.monitor import get_geo_info
 from bot.checks.service import check_resource
 from bot.checks.subfinder import find_subdomains, export_subdomains_csv
@@ -21,8 +22,8 @@ from bot.telegram.callback_data import (
     site_history_callback, site_pause_1h_callback
 )
 from bot.core.status_formatter import (
-    format_status_text, format_user_status_message, format_weekly_user_report,
-    split_message
+    append_agent_results, format_status_text, format_user_status_message,
+    format_weekly_user_report, split_message
 )
 from bot.core.url_utils import normalize_url
 import os
@@ -474,6 +475,7 @@ async def admin_user_details(query: types.CallbackQuery):
 
 async def send_status_report(user_id, url, bot, site_id=None):
     result = await check_resource(url)
+    agent_results = await check_with_agents(url, checks=["http", "ssl", "domain"])
     status_str = format_status_text(
         result.http,
         result.ssl_days,
@@ -481,6 +483,7 @@ async def send_status_report(user_id, url, bot, site_id=None):
         result.registrar,
         result.contact_url,
     )
+    status_str = append_agent_results(status_str, agent_results)
     if site_id:
         update_site_status_by_id(site_id, status_str)
     else:
@@ -493,6 +496,7 @@ async def send_status_report(user_id, url, bot, site_id=None):
         result.domain_days,
         result.registrar,
         result.contact_url,
+        agent_results=agent_results,
     )
     await bot.send_message(user_id, text)
 

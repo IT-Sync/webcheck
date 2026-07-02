@@ -78,13 +78,44 @@ def format_status_text(http_details, ssl_days, domain_days, registrar=None, cont
     ])
 
 
-def format_user_status_message(url, http_details, ssl_days, domain_days, registrar=None, contact_url=None):
+def format_agent_result_line(result):
+    agent_id = result.get("agent_id") or "agent"
+    country = result.get("country") or "unknown"
+    region = result.get("region")
+    location = f"{country}, {region}" if region else country
+    error = result.get("error")
+    http = result.get("http")
+    if error:
+        return f"{agent_id} ({location}): DOWN | {error}"
+    if http:
+        return f"{agent_id} ({location}): {format_http_line(http)}"
+    status = "OK" if result.get("ok") else "DOWN"
+    return f"{agent_id} ({location}): {status}"
+
+
+def format_agent_results(agent_results):
+    if not agent_results:
+        return ""
+    lines = ["Проверки агентами:"]
+    lines.extend(format_agent_result_line(result) for result in agent_results)
+    return "\n".join(lines)
+
+
+def append_agent_results(text, agent_results):
+    agent_text = format_agent_results(agent_results)
+    if not agent_text:
+        return text
+    return f"{text}\n{agent_text}"
+
+
+def format_user_status_message(url, http_details, ssl_days, domain_days, registrar=None, contact_url=None, agent_results=None):
     availability = "✅ Сайт доступен" if http_details.get("ok") else "❌ Сайт недоступен"
-    return (
+    text = (
         f"🔗 {url}\n"
         f"{availability}\n"
         f"{format_status_text(http_details, ssl_days, domain_days, registrar, contact_url)}"
     )
+    return append_agent_results(text, agent_results)
 
 
 def format_down_alert(
