@@ -228,13 +228,13 @@ def status_has_expiry_warning(status):
     return False
 
 
-def format_weekly_user_report(rows, title="📅 Еженедельный отчёт по ресурсам"):
+def weekly_report_summary_lines(rows, title):
     total = len(rows)
     paused = sum(1 for row in rows if row.get("is_paused"))
     problems = sum(1 for row in rows if status_has_problem(row.get("last_status")))
     expiry = sum(1 for row in rows if status_has_expiry_warning(row.get("last_status")))
 
-    lines = [
+    return [
         title,
         f"Всего ресурсов: {total}",
         f"Активных: {total - paused}",
@@ -243,11 +243,9 @@ def format_weekly_user_report(rows, title="📅 Еженедельный отч�
         f"SSL/домен истекают скоро: {expiry}",
     ]
 
-    if not rows:
-        lines.append("Ресурсов пока нет.")
-        return "\n".join(lines)
 
-    lines.append("")
+def format_weekly_resource_lines(rows):
+    lines = []
     for row in rows:
         marker = "⏸" if row.get("is_paused") else ("⚠️" if status_has_problem(row.get("last_status")) else "✅")
         checked = row.get("last_checked")
@@ -260,8 +258,39 @@ def format_weekly_user_report(rows, title="📅 Еженедельный отч�
         if compact_agent_results:
             lines.append(f"   Агенты: {compact_agent_results}")
         lines.append(f"   Последняя проверка: {checked_text}")
+    return lines
+
+
+def format_weekly_user_report(rows, title="📅 Еженедельный отчёт по ресурсам"):
+    lines = weekly_report_summary_lines(rows, title)
+
+    if not rows:
+        lines.append("Ресурсов пока нет.")
+        return "\n".join(lines)
+
+    lines.append("")
+    lines.extend(format_weekly_resource_lines(rows))
 
     return "\n".join(lines)
+
+
+def format_weekly_user_report_chunks(rows, title="📅 Еженедельный отчёт по ресурсам", per_message=10):
+    if not rows:
+        return [format_weekly_user_report(rows, title=title)]
+
+    chunks = []
+    total = len(rows)
+    total_parts = (total + per_message - 1) // per_message
+    for part_index, start in enumerate(range(0, total, per_message), start=1):
+        part_rows = rows[start:start + per_message]
+        end = start + len(part_rows)
+        lines = weekly_report_summary_lines(rows, title)
+        if total_parts > 1:
+            lines.append(f"Часть {part_index}/{total_parts}: ресурсы {start + 1}-{end} из {total}")
+        lines.append("")
+        lines.extend(format_weekly_resource_lines(part_rows))
+        chunks.append("\n".join(lines))
+    return chunks
 
 
 def group_rows_by_user(rows):

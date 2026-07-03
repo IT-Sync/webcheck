@@ -24,7 +24,7 @@ from bot.telegram.callback_data import (
 )
 from bot.core.status_formatter import (
     append_agent_results, format_status_text, format_user_status_message,
-    format_weekly_user_report, split_message
+    format_weekly_user_report_chunks, split_message
 )
 from bot.core.url_utils import normalize_url
 import os
@@ -522,7 +522,7 @@ async def send_weekly_user_report(message: types.Message):
     agent_results_by_url = get_latest_agent_results_for_urls(row["url"] for row in rows)
     for row in rows:
         row["agent_results"] = agent_results_by_url.get(row["url"], [])
-    for chunk in split_message(format_weekly_user_report(rows)):
+    for chunk in format_weekly_user_report_chunks(rows):
         await message.answer(chunk)
 
 @router.message(F.text == "/weekly")
@@ -629,8 +629,7 @@ async def weekly_admin_report(message: types.Message):
     agent_results_by_url = get_latest_agent_results_for_urls(row["url"] for row in rows)
     for row in rows:
         row["agent_results"] = agent_results_by_url.get(row["url"], [])
-    report = format_weekly_user_report(rows, title="📅 Еженедельный админ-отчёт по всем ресурсам")
-    for chunk in split_message(report):
+    for chunk in format_weekly_user_report_chunks(rows, title="📅 Еженедельный админ-отчёт по всем ресурсам"):
         await message.answer(chunk)
 
 @router.message(F.text == "/status")

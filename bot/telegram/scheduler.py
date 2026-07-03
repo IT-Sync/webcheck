@@ -12,8 +12,8 @@ from bot.checks.service import check_resource
 from bot.core.status_formatter import (
     append_agent_results,
     format_domain_expiry_alert, format_down_alert, format_recovery_alert,
-    format_ssl_expiry_alert, format_status_text, format_weekly_user_report,
-    group_rows_by_user, split_message
+    format_ssl_expiry_alert, format_status_text, format_weekly_user_report_chunks,
+    group_rows_by_user
 )
 from bot.telegram.callback_data import site_check_now_callback, site_history_callback, site_pause_1h_callback
 from datetime import datetime
@@ -276,7 +276,7 @@ async def send_weekly_reports(bot):
 
     for user_id, user_rows in grouped.items():
         try:
-            for chunk in split_message(format_weekly_user_report(user_rows)):
+            for chunk in format_weekly_user_report_chunks(user_rows):
                 await bot.send_message(user_id, chunk)
         except TelegramForbiddenError:
             first_url = user_rows[0]["url"] if user_rows else "weekly_report"
@@ -285,9 +285,8 @@ async def send_weekly_reports(bot):
             log_event("weekly_report", f"Не удалось отправить отчёт пользователю {user_id}: {e}")
 
     if BOT_OWNER_ID:
-        admin_report = format_weekly_user_report(rows, title="📅 Еженедельный админ-отчёт по всем ресурсам")
         try:
-            for chunk in split_message(admin_report):
+            for chunk in format_weekly_user_report_chunks(rows, title="📅 Еженедельный админ-отчёт по всем ресурсам"):
                 await bot.send_message(BOT_OWNER_ID, chunk)
         except Exception as e:
             log_event("weekly_report", f"Не удалось отправить админ-отчёт: {e}")

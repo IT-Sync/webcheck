@@ -26,6 +26,7 @@ from status_formatter import (
     format_ssl_expiry_alert,
     format_status_text,
     format_weekly_user_report,
+    format_weekly_user_report_chunks,
     split_message,
 )
 
@@ -208,6 +209,27 @@ class StatusFormatterTest(unittest.TestCase):
 
         self.assertIn("Агенты: Earth [RU, Saint-Petersburg]: OK, 115 ms; Mars [RU, Moscow]: OK, 107 ms", report)
         self.assertNotIn("🌍 Проверки агентами", report)
+
+    def test_weekly_report_chunks_limit_resources_per_message(self):
+        rows = [
+            {
+                "url": f"https://site-{idx}.example",
+                "last_status": "HTTP: OK | 200 | HEAD | 50 ms\nSSL: 30 дней до истечения\nДомен: 90 дней до окончания",
+                "last_checked": None,
+                "is_paused": False,
+            }
+            for idx in range(25)
+        ]
+
+        chunks = format_weekly_user_report_chunks(rows, per_message=10)
+
+        self.assertEqual(len(chunks), 3)
+        self.assertIn("Часть 1/3: ресурсы 1-10 из 25", chunks[0])
+        self.assertIn("Часть 2/3: ресурсы 11-20 из 25", chunks[1])
+        self.assertIn("Часть 3/3: ресурсы 21-25 из 25", chunks[2])
+        self.assertEqual(chunks[0].count("https://site-"), 10)
+        self.assertEqual(chunks[1].count("https://site-"), 10)
+        self.assertEqual(chunks[2].count("https://site-"), 5)
 
     def test_split_message_keeps_chunks_under_limit(self):
         chunks = split_message("a\nb\nc", max_len=3)
