@@ -19,10 +19,18 @@ async def check_resource(
     url: str,
     *,
     include_domain: bool = True,
+    http_retries: int = 3,
+    http_delay: int = 5,
+    http_timeout: int = 12,
     country: str | None = None,
     agent_id: str | None = None,
 ) -> ResourceCheckResult:
-    http = await check_http_details(url)
+    http = await check_http_details(
+        url,
+        retries=http_retries,
+        delay=http_delay,
+        timeout_seconds=http_timeout,
+    )
     ssl_days = await check_ssl(url)
     if include_domain:
         domain_days, registrar, contact_url = await check_domain_expiry(url)

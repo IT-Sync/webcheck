@@ -44,8 +44,8 @@ def resolve_hostname(url):
 #
 #    return False
 
-async def check_http_details(url, retries=3, delay=5):
-    timeout = aiohttp.ClientTimeout(total=12)
+async def check_http_details(url, retries=3, delay=5, timeout_seconds=12):
+    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -132,8 +132,8 @@ async def check_http_details(url, retries=3, delay=5):
     }
 
 
-async def check_http(url, retries=3, delay=5):
-    details = await check_http_details(url, retries=retries, delay=delay)
+async def check_http(url, retries=3, delay=5, timeout_seconds=12):
+    details = await check_http_details(url, retries=retries, delay=delay, timeout_seconds=timeout_seconds)
     return details["ok"]
 
 

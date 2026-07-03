@@ -25,6 +25,9 @@ BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
 MAX_CONCURRENT_CHECKS = int(os.getenv("MAX_CONCURRENT_CHECKS", "30"))
 HTTP_FAILURE_THRESHOLD = int(os.getenv("HTTP_FAILURE_THRESHOLD", "2"))
 CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "5"))
+MONITOR_HTTP_RETRIES = int(os.getenv("MONITOR_HTTP_RETRIES", "1"))
+MONITOR_HTTP_DELAY_SECONDS = int(os.getenv("MONITOR_HTTP_DELAY_SECONDS", "1"))
+MONITOR_HTTP_TIMEOUT_SECONDS = int(os.getenv("MONITOR_HTTP_TIMEOUT_SECONDS", "5"))
 WEEKLY_REPORT_DAY = os.getenv("WEEKLY_REPORT_DAY", "mon")
 WEEKLY_REPORT_HOUR = int(os.getenv("WEEKLY_REPORT_HOUR", "9"))
 WEEKLY_REPORT_MINUTE = int(os.getenv("WEEKLY_REPORT_MINUTE", "0"))
@@ -57,7 +60,13 @@ async def process_site(bot, site_row):
     incident_started_at = site_row[3]
     last_success_at = site_row[4]
     try:
-        result = await check_resource(url, include_domain=False)
+        result = await check_resource(
+            url,
+            include_domain=False,
+            http_retries=MONITOR_HTTP_RETRIES,
+            http_delay=MONITOR_HTTP_DELAY_SECONDS,
+            http_timeout=MONITOR_HTTP_TIMEOUT_SECONDS,
+        )
         http_details = result.http
         http_ok = http_details["ok"]
         ssl_days = result.ssl_days
