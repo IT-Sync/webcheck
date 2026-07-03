@@ -175,6 +175,40 @@ class StatusFormatterTest(unittest.TestCase):
         self.assertIn("На паузе: 1", report)
         self.assertIn("https://down.example", report)
 
+    def test_weekly_report_includes_compact_agent_results(self):
+        report = format_weekly_user_report([
+            {
+                "url": "https://glut1.ru",
+                "last_status": (
+                    "HTTP: OK | 200 | HEAD | 1293 ms | https://glut1.ru\n"
+                    "SSL: 71 дней до истечения\n"
+                    "Домен: 306 дней до окончания\n"
+                    "🌍 Проверки агентами\n"
+                    "• Earth [RU, Saint-Petersburg]\n"
+                    "  HTTP: OK | 200 | HEAD | 115 ms | https://glut1.ru"
+                ),
+                "last_checked": datetime(2026, 7, 3, 11, 19, 36),
+                "is_paused": False,
+                "agent_results": [
+                    {
+                        "agent_id": "Earth",
+                        "country": "RU",
+                        "region": "Saint-Petersburg",
+                        "http": {"ok": True, "latency_ms": 115},
+                    },
+                    {
+                        "agent_id": "Mars",
+                        "country": "RU",
+                        "region": "Moscow",
+                        "http": {"ok": True, "latency_ms": 107},
+                    },
+                ],
+            },
+        ])
+
+        self.assertIn("Агенты: Earth [RU, Saint-Petersburg]: OK, 115 ms; Mars [RU, Moscow]: OK, 107 ms", report)
+        self.assertNotIn("🌍 Проверки агентами", report)
+
     def test_split_message_keeps_chunks_under_limit(self):
         chunks = split_message("a\nb\nc", max_len=3)
 
@@ -202,6 +236,35 @@ class StatusFormatterTest(unittest.TestCase):
         self.assertIn("🌍 Проверки агентами", text)
         self.assertIn("• Earth [RU, Saint-Petersburg]", text)
         self.assertIn("  HTTP: OK", text)
+
+    def test_append_agent_results_replaces_existing_agent_block(self):
+        base_text = append_agent_results(
+            "HTTP: OK\nSSL: 71 дней до истечения",
+            [
+                {
+                    "agent_id": "Earth",
+                    "country": "RU",
+                    "region": "Saint-Petersburg",
+                    "http": {"ok": True, "status_code": 200, "method": "HEAD", "latency_ms": 115},
+                }
+            ],
+        )
+
+        text = append_agent_results(
+            f"🔗 https://glut1.ru\n{base_text}\n🕒 Последняя проверка: 2026-07-03 11:19:36",
+            [
+                {
+                    "agent_id": "Earth",
+                    "country": "RU",
+                    "region": "Saint-Petersburg",
+                    "checked_at": datetime(2026, 7, 3, 11, 19, 36),
+                    "http": {"ok": True, "status_code": 200, "method": "HEAD", "latency_ms": 115},
+                }
+            ],
+        )
+
+        self.assertEqual(text.count("🌍 Проверки агентами"), 1)
+        self.assertEqual(text.count("• Earth [RU, Saint-Petersburg]"), 1)
 
 
 if __name__ == "__main__":

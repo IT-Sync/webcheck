@@ -588,6 +588,44 @@ def get_latest_agent_results_for_url(url, max_age_minutes=60):
         for row in rows
     ]
 
+def get_latest_agent_results_for_urls(urls, max_age_minutes=60):
+    urls = list(dict.fromkeys(url for url in urls if url))
+    if not urls:
+        return {}
+    since = datetime.utcnow() - timedelta(minutes=max_age_minutes)
+    c.execute(
+        """
+        SELECT DISTINCT ON (url, agent_id)
+            url, agent_id, country, region, provider, ok, http, ssl_days,
+            domain_days, registrar, contact_url, error, duration_ms, created_at
+        FROM agent_check_results
+        WHERE url = ANY(%s)
+          AND created_at >= %s
+        ORDER BY url, agent_id, created_at DESC
+        """,
+        (urls, since)
+    )
+    grouped = {}
+    for row in c.fetchall():
+        url = row[0]
+        grouped.setdefault(url, []).append({
+            "agent_id": row[1],
+            "country": row[2],
+            "region": row[3],
+            "provider": row[4],
+            "url": url,
+            "ok": row[5],
+            "http": row[6] if not isinstance(row[6], str) else json.loads(row[6]),
+            "ssl_days": row[7],
+            "domain_days": row[8],
+            "registrar": row[9],
+            "contact_url": row[10],
+            "error": row[11],
+            "duration_ms": row[12],
+            "checked_at": row[13],
+        })
+    return grouped
+
 def get_user_logs():
     since = datetime.utcnow() - timedelta(days=14)
     c.execute("SELECT created_at, user_id, username, action FROM user_logs WHERE created_at > %s ORDER BY created_at DESC", (since,))

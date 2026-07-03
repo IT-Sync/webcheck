@@ -3,7 +3,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.infra.db import (
     get_all_site_checks, get_report_sites, update_site_status_by_id,
     log_event, delete_user_sites, log_user_action, update_site_success,
-    start_site_incident, clear_site_incident
+    start_site_incident, clear_site_incident, get_latest_agent_results_for_urls
 )
 from bot.infra.db import get_site_flags_by_id, set_site_flags_by_id
 from bot.agent_server.checks import check_with_agents
@@ -29,6 +29,8 @@ MONITOR_HTTP_RETRIES = int(os.getenv("MONITOR_HTTP_RETRIES", "1"))
 MONITOR_HTTP_DELAY_SECONDS = int(os.getenv("MONITOR_HTTP_DELAY_SECONDS", "1"))
 MONITOR_HTTP_TIMEOUT_SECONDS = int(os.getenv("MONITOR_HTTP_TIMEOUT_SECONDS", "5"))
 AGENT_ALERT_CHECK_TIMEOUT_SECONDS = int(os.getenv("AGENT_ALERT_CHECK_TIMEOUT_SECONDS", "3"))
+AGENT_BACKGROUND_CHECK_TIMEOUT_SECONDS = int(os.getenv("AGENT_BACKGROUND_CHECK_TIMEOUT_SECONDS", "5"))
+MONITOR_MAX_INSTANCES = int(os.getenv("MONITOR_MAX_INSTANCES", "1"))
 WEEKLY_REPORT_DAY = os.getenv("WEEKLY_REPORT_DAY", "mon")
 WEEKLY_REPORT_HOUR = int(os.getenv("WEEKLY_REPORT_HOUR", "9"))
 WEEKLY_REPORT_MINUTE = int(os.getenv("WEEKLY_REPORT_MINUTE", "0"))
@@ -230,7 +232,11 @@ async def process_site(bot, site_row):
             if notification_flags:
                 set_site_flags_by_id(site_id, **notification_flags)
 
-        agent_results = await check_with_agents(url, checks=["http"])
+        agent_results = await check_with_agents(
+            url,
+            checks=["http"],
+            timeout_sec=AGENT_BACKGROUND_CHECK_TIMEOUT_SECONDS,
+        )
         if agent_results:
             update_site_status_by_id(site_id, append_agent_results(status, agent_results))
 
@@ -263,6 +269,9 @@ async def notify_block(bot, user_id, url):
 
 async def send_weekly_reports(bot):
     rows = get_report_sites()
+    agent_results_by_url = get_latest_agent_results_for_urls(row["url"] for row in rows)
+    for row in rows:
+        row["agent_results"] = agent_results_by_url.get(row["url"], [])
     grouped = group_rows_by_user(rows)
 
     for user_id, user_rows in grouped.items():
@@ -285,7 +294,14 @@ async def send_weekly_reports(bot):
 
 async def start_scheduler(bot):
     scheduler = AsyncIOScheduler(timezone=SCHEDULER_TIMEZONE)
-    scheduler.add_job(monitor, "interval", minutes=CHECK_INTERVAL_MINUTES, args=[bot])
+    scheduler.add_job(
+        monitor,
+        "interval",
+        minutes=CHECK_INTERVAL_MINUTES,
+        args=[bot],
+        max_instances=MONITOR_MAX_INSTANCES,
+        coalesce=True,
+    )
     scheduler.add_job(
         send_weekly_reports,
         "cron",

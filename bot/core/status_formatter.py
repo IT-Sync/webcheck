@@ -104,11 +104,40 @@ def format_agent_results(agent_results):
     return "\n".join(lines)
 
 
+def format_agent_results_compact(agent_results):
+    if not agent_results:
+        return ""
+    parts = []
+    for result in agent_results:
+        agent_id = result.get("agent_id") or "agent"
+        country = result.get("country") or "unknown"
+        region = result.get("region")
+        location = f"{country}, {region}" if region else country
+        http = result.get("http") or {}
+        latency_ms = http.get("latency_ms")
+        latency_text = f", {latency_ms} ms" if latency_ms is not None else ""
+        status = "OK" if (http.get("ok") or result.get("ok")) else "DOWN"
+        if result.get("error"):
+            status = f"DOWN: {result['error']}"
+        parts.append(f"{agent_id} [{location}]: {status}{latency_text}")
+    return "; ".join(parts)
+
+
+def strip_agent_results(text):
+    if not text:
+        return text
+    marker = "\n🌍 Проверки агентами"
+    marker_pos = text.find(marker)
+    if marker_pos == -1:
+        return text
+    return text[:marker_pos].rstrip()
+
+
 def append_agent_results(text, agent_results):
     agent_text = format_agent_results(agent_results)
     if not agent_text:
         return text
-    return f"{text}{agent_text}"
+    return f"{strip_agent_results(text)}{agent_text}"
 
 
 def format_user_status_message(url, http_details, ssl_days, domain_days, registrar=None, contact_url=None, agent_results=None):
@@ -224,9 +253,12 @@ def format_weekly_user_report(rows, title="📅 Еженедельный отч�
         checked = row.get("last_checked")
         checked_text = checked.strftime("%Y-%m-%d %H:%M") if checked else "не проверялся"
         status = row.get("last_status") or "статус ещё не получен"
-        compact_status = " / ".join(status.splitlines()[:3])
+        compact_status = " / ".join(strip_agent_results(status).splitlines()[:3])
+        compact_agent_results = format_agent_results_compact(row.get("agent_results"))
         lines.append(f"{marker} {row['url']}")
         lines.append(f"   {compact_status}")
+        if compact_agent_results:
+            lines.append(f"   Агенты: {compact_agent_results}")
         lines.append(f"   Последняя проверка: {checked_text}")
 
     return "\n".join(lines)

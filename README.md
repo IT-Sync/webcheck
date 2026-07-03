@@ -22,6 +22,8 @@ BOT_TOKEN=Токен_бота_от_BotFather
 BOT_OWNER_ID=123456789              # Telegram ID администратора
 CHECK_INTERVAL_MINUTES=2            # интервал фоновых проверок
 HTTP_FAILURE_THRESHOLD=4            # сколько HTTP-провалов подряд считать инцидентом
+MAX_CONCURRENT_CHECKS=30            # сколько сайтов проверять параллельно внутри одного прохода
+MONITOR_MAX_INSTANCES=1             # сколько проходов мониторинга может идти одновременно
 MONITOR_HTTP_RETRIES=1              # попыток HTTP в фоновой проверке
 MONITOR_HTTP_TIMEOUT_SECONDS=5      # timeout одной HTTP-попытки
 MONITOR_HTTP_DELAY_SECONDS=1        # пауза между retry
@@ -100,6 +102,7 @@ AGENT_WS_PUBLISH_HOST=0.0.0.0
 AGENT_CHECKS_ENABLED=1
 AGENT_CHECK_TIMEOUT_SECONDS=30
 AGENT_ALERT_CHECK_TIMEOUT_SECONDS=3
+AGENT_BACKGROUND_CHECK_TIMEOUT_SECONDS=5
 ```
 
 В Docker порт агента публикуется отдельно от админки. Если агент запускается в контейнере и подключается через `host.docker.internal`, порт должен быть опубликован не только на `127.0.0.1`, а на `0.0.0.0` или конкретный адрес docker gateway.
@@ -123,7 +126,9 @@ SERVER_WS_URL=wss://your-domain.example:443/ws/agents
 SERVER_WS_URL=ws://host.docker.internal:8090/ws/agents
 ```
 
-Когда `AGENT_CHECKS_ENABLED=1`, живые проверки и фоновый мониторинг добавляют в статус блок с результатами online-агентов и их странами. Для DOWN/RECOVERY уведомлений используется короткое ожидание `AGENT_ALERT_CHECK_TIMEOUT_SECONDS`, чтобы агентские проверки попали в то же сообщение и не задерживали алерт надолго.
+Когда `AGENT_CHECKS_ENABLED=1`, живые проверки и фоновый мониторинг добавляют в статус блок с результатами online-агентов и их странами. Для DOWN/RECOVERY уведомлений используется короткое ожидание `AGENT_ALERT_CHECK_TIMEOUT_SECONDS`, чтобы агентские проверки попали в то же сообщение и не задерживали алерт надолго. Для обычного фонового обновления статуса используется `AGENT_BACKGROUND_CHECK_TIMEOUT_SECONDS`, чтобы агенты не растягивали весь проход мониторинга.
+
+Если в логах видно `maximum number of running instances reached`, значит один проход мониторинга длится дольше `CHECK_INTERVAL_MINUTES`. Сначала увеличьте `MAX_CONCURRENT_CHECKS` или `CHECK_INTERVAL_MINUTES`, либо уменьшите `AGENT_BACKGROUND_CHECK_TIMEOUT_SECONDS`. `MONITOR_MAX_INSTANCES=2` можно включать только осознанно: параллельные проходы быстрее разгружают очередь, но могут одновременно обновлять состояние одного и того же сайта.
 
 ## Локальный запуск без Docker
 1. Установите PostgreSQL и создайте БД/пользователя из `.env`.

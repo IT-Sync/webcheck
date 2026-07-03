@@ -7,7 +7,7 @@ from bot.infra.db import (
     get_report_sites, get_event_logs_for_url,
     export_user_logs_csv as export_logs_file,
     export_sites_csv as export_sites_file,
-    get_latest_agent_results_for_url,
+    get_latest_agent_results_for_url, get_latest_agent_results_for_urls,
     update_site_status, update_site_status_by_id, delete_user_data,
     get_site_for_user, get_site_by_id, delete_site_by_id,
     admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
@@ -519,6 +519,9 @@ async def status_me(message: types.Message):
 
 async def send_weekly_user_report(message: types.Message):
     rows = get_report_sites(user_id=message.from_user.id)
+    agent_results_by_url = get_latest_agent_results_for_urls(row["url"] for row in rows)
+    for row in rows:
+        row["agent_results"] = agent_results_by_url.get(row["url"], [])
     for chunk in split_message(format_weekly_user_report(rows)):
         await message.answer(chunk)
 
@@ -622,10 +625,11 @@ async def weekly_admin_report(message: types.Message):
     if message.from_user.id != BOT_OWNER_ID:
         return await message.answer("Нет доступа")
     log_user_action(message.from_user.id, "/weekly_all", message.from_user.username)
-    report = format_weekly_user_report(
-        get_report_sites(),
-        title="📅 Еженедельный админ-отчёт по всем ресурсам"
-    )
+    rows = get_report_sites()
+    agent_results_by_url = get_latest_agent_results_for_urls(row["url"] for row in rows)
+    for row in rows:
+        row["agent_results"] = agent_results_by_url.get(row["url"], [])
+    report = format_weekly_user_report(rows, title="📅 Еженедельный админ-отчёт по всем ресурсам")
     for chunk in split_message(report):
         await message.answer(chunk)
 
