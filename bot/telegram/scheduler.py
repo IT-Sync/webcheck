@@ -28,6 +28,7 @@ CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "5"))
 MONITOR_HTTP_RETRIES = int(os.getenv("MONITOR_HTTP_RETRIES", "1"))
 MONITOR_HTTP_DELAY_SECONDS = int(os.getenv("MONITOR_HTTP_DELAY_SECONDS", "1"))
 MONITOR_HTTP_TIMEOUT_SECONDS = int(os.getenv("MONITOR_HTTP_TIMEOUT_SECONDS", "5"))
+AGENT_ALERT_CHECK_TIMEOUT_SECONDS = int(os.getenv("AGENT_ALERT_CHECK_TIMEOUT_SECONDS", "3"))
 WEEKLY_REPORT_DAY = os.getenv("WEEKLY_REPORT_DAY", "mon")
 WEEKLY_REPORT_HOUR = int(os.getenv("WEEKLY_REPORT_HOUR", "9"))
 WEEKLY_REPORT_MINUTE = int(os.getenv("WEEKLY_REPORT_MINUTE", "0"))
@@ -52,6 +53,7 @@ def build_incident_keyboard(site_id):
     kb.button(text="Открыть историю", callback_data=site_history_callback(site_id))
     kb.adjust(1)
     return kb.as_markup()
+
 
 async def process_site(bot, site_row):
     site_id = site_row[0]
@@ -106,8 +108,6 @@ async def process_site(bot, site_row):
             contact_url = cached_contact_url
 
         status = format_status_text(http_details, ssl_days, domain_days, registrar, contact_url)
-        agent_results = await check_with_agents(url, checks=["http"])
-        status = append_agent_results(status, agent_results)
         update_site_status_by_id(site_id, status)
 
         issues = []
@@ -141,9 +141,16 @@ async def process_site(bot, site_row):
             (incident_started_at and http_fail_count >= HTTP_FAILURE_THRESHOLD)
         ):
             try:
+                recovery_text = format_recovery_alert(url, http_details, incident_started_at=incident_started_at)
+                agent_results = await check_with_agents(
+                    url,
+                    checks=["http"],
+                    timeout_sec=AGENT_ALERT_CHECK_TIMEOUT_SECONDS,
+                )
+                recovery_text = append_agent_results(recovery_text, agent_results)
                 await bot.send_message(
                     user_id,
-                    format_recovery_alert(url, http_details, incident_started_at=incident_started_at)
+                    recovery_text
                 )
             except TelegramForbiddenError:
                 await notify_block(bot, user_id, url)
@@ -205,6 +212,13 @@ async def process_site(bot, site_row):
 
         if issues:
             text = "\n\n".join(issues)
+            if notification_flags.get("http"):
+                agent_results = await check_with_agents(
+                    url,
+                    checks=["http"],
+                    timeout_sec=AGENT_ALERT_CHECK_TIMEOUT_SECONDS,
+                )
+                text = append_agent_results(text, agent_results)
             try:
                 await bot.send_message(user_id, text, reply_markup=build_incident_keyboard(site_id))
             except TelegramForbiddenError:
@@ -215,6 +229,10 @@ async def process_site(bot, site_row):
                 return
             if notification_flags:
                 set_site_flags_by_id(site_id, **notification_flags)
+
+        agent_results = await check_with_agents(url, checks=["http"])
+        if agent_results:
+            update_site_status_by_id(site_id, append_agent_results(status, agent_results))
 
     except TelegramForbiddenError:
         await notify_block(bot, user_id, url)

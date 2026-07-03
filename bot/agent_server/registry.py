@@ -148,7 +148,7 @@ class AgentRegistry:
             await agent.ws.send_json(payload)
 
         try:
-            return await asyncio.wait_for(future, timeout=timeout_sec + 5)
+            return await asyncio.wait_for(future, timeout=timeout_sec + 1)
         except Exception:
             async with self._lock:
                 self._pending.pop(payload["job_id"], None)

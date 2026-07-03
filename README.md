@@ -99,6 +99,7 @@ AGENT_WS_PATH=/ws/agents
 AGENT_WS_PUBLISH_HOST=0.0.0.0
 AGENT_CHECKS_ENABLED=1
 AGENT_CHECK_TIMEOUT_SECONDS=30
+AGENT_ALERT_CHECK_TIMEOUT_SECONDS=3
 ```
 
 В Docker порт агента публикуется отдельно от админки. Если агент запускается в контейнере и подключается через `host.docker.internal`, порт должен быть опубликован не только на `127.0.0.1`, а на `0.0.0.0` или конкретный адрес docker gateway.
@@ -122,7 +123,7 @@ SERVER_WS_URL=wss://your-domain.example:443/ws/agents
 SERVER_WS_URL=ws://host.docker.internal:8090/ws/agents
 ```
 
-Когда `AGENT_CHECKS_ENABLED=1`, живые проверки и фоновый мониторинг добавляют в статус блок с результатами online-агентов и их странами.
+Когда `AGENT_CHECKS_ENABLED=1`, живые проверки и фоновый мониторинг добавляют в статус блок с результатами online-агентов и их странами. Для DOWN/RECOVERY уведомлений используется короткое ожидание `AGENT_ALERT_CHECK_TIMEOUT_SECONDS`, чтобы агентские проверки попали в то же сообщение и не задерживали алерт надолго.
 
 ## Локальный запуск без Docker
 1. Установите PostgreSQL и создайте БД/пользователя из `.env`.
