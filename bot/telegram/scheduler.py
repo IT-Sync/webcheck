@@ -7,7 +7,7 @@ from bot.infra.db import (
 )
 from bot.infra.db import get_site_flags_by_id, set_site_flags_by_id
 from bot.agent_server.checks import check_with_agents
-from bot.checks.monitor import check_domain_expiry
+from bot.checks.monitor import check_domain_expiry, check_http_details
 from bot.checks.service import check_resource
 from bot.core.status_formatter import (
     append_agent_results,
@@ -25,9 +25,13 @@ BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
 MAX_CONCURRENT_CHECKS = int(os.getenv("MAX_CONCURRENT_CHECKS", "30"))
 HTTP_FAILURE_THRESHOLD = int(os.getenv("HTTP_FAILURE_THRESHOLD", "2"))
 CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "5"))
-MONITOR_HTTP_RETRIES = int(os.getenv("MONITOR_HTTP_RETRIES", "1"))
-MONITOR_HTTP_DELAY_SECONDS = int(os.getenv("MONITOR_HTTP_DELAY_SECONDS", "1"))
-MONITOR_HTTP_TIMEOUT_SECONDS = int(os.getenv("MONITOR_HTTP_TIMEOUT_SECONDS", "5"))
+MONITOR_HTTP_RETRIES = int(os.getenv("MONITOR_HTTP_RETRIES", "2"))
+MONITOR_HTTP_DELAY_SECONDS = int(os.getenv("MONITOR_HTTP_DELAY_SECONDS", "2"))
+MONITOR_HTTP_TIMEOUT_SECONDS = int(os.getenv("MONITOR_HTTP_TIMEOUT_SECONDS", "10"))
+MONITOR_CONFIRM_DOWN_ENABLED = os.getenv("MONITOR_CONFIRM_DOWN_ENABLED", "1") == "1"
+MONITOR_CONFIRM_HTTP_RETRIES = int(os.getenv("MONITOR_CONFIRM_HTTP_RETRIES", "2"))
+MONITOR_CONFIRM_HTTP_DELAY_SECONDS = int(os.getenv("MONITOR_CONFIRM_HTTP_DELAY_SECONDS", "2"))
+MONITOR_CONFIRM_HTTP_TIMEOUT_SECONDS = int(os.getenv("MONITOR_CONFIRM_HTTP_TIMEOUT_SECONDS", "10"))
 AGENT_ALERT_CHECK_TIMEOUT_SECONDS = int(os.getenv("AGENT_ALERT_CHECK_TIMEOUT_SECONDS", "3"))
 AGENT_BACKGROUND_CHECK_TIMEOUT_SECONDS = int(os.getenv("AGENT_BACKGROUND_CHECK_TIMEOUT_SECONDS", "5"))
 MONITOR_MAX_INSTANCES = int(os.getenv("MONITOR_MAX_INSTANCES", "1"))
@@ -47,6 +51,23 @@ async def monitor(bot):
 async def process_site_limited(bot, semaphore, site_row):
     async with semaphore:
         await process_site(bot, site_row)
+
+def should_confirm_http_down(http_fail_count, notified_http):
+    return (
+        MONITOR_CONFIRM_DOWN_ENABLED and
+        not notified_http and
+        http_fail_count + 1 >= HTTP_FAILURE_THRESHOLD
+    )
+
+
+async def confirm_http_down(url):
+    return await check_http_details(
+        url,
+        retries=MONITOR_CONFIRM_HTTP_RETRIES,
+        delay=MONITOR_CONFIRM_HTTP_DELAY_SECONDS,
+        timeout_seconds=MONITOR_CONFIRM_HTTP_TIMEOUT_SECONDS,
+    )
+
 
 def build_incident_keyboard(site_id):
     kb = InlineKeyboardBuilder()
@@ -114,6 +135,23 @@ async def process_site(bot, site_row):
 
         issues = []
         notification_flags = {}
+        confirmed_transient_http = False
+
+        if not http_ok and should_confirm_http_down(http_fail_count, notified_http):
+            confirmed_http_details = await confirm_http_down(url)
+            if confirmed_http_details.get("ok"):
+                http_details = confirmed_http_details
+                http_ok = True
+                confirmed_transient_http = True
+                status = format_status_text(http_details, ssl_days, domain_days, registrar, contact_url)
+                update_site_status_by_id(site_id, status)
+                log_event(
+                    url,
+                    (
+                        "DOWN не подтверждён повторной проверкой; "
+                        f"сброс счётчика провалов после {http_fail_count + 1}"
+                    )
+                )
 
         # HTTP
         if not http_ok:
@@ -138,7 +176,7 @@ async def process_site(bot, site_row):
                 notification_flags["http_ts"] = now
             else:
                 set_site_flags_by_id(site_id, http_fail_count=new_fail_count)
-        elif http_ok and (
+        elif http_ok and not confirmed_transient_http and (
             notified_http or
             (incident_started_at and http_fail_count >= HTTP_FAILURE_THRESHOLD)
         ):
