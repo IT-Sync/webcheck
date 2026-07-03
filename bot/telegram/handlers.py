@@ -7,6 +7,7 @@ from bot.infra.db import (
     get_report_sites, get_event_logs_for_url,
     export_user_logs_csv as export_logs_file,
     export_sites_csv as export_sites_file,
+    get_latest_agent_results_for_url,
     update_site_status, update_site_status_by_id, delete_user_data,
     get_site_for_user, get_site_by_id, delete_site_by_id,
     admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
@@ -511,7 +512,8 @@ async def status_me(message: types.Message):
         site = next((s for s in user_sites if s[3] == url), None)
         if not site:
             return await message.answer("❌ Этот сайт не найден среди ваших.")
-        await message.answer(format_cached_status(site, paused=site[6]))
+        agent_results = get_latest_agent_results_for_url(url)
+        await message.answer(append_agent_results(format_cached_status(site, paused=site[6]), agent_results))
     else:
         await send_weekly_user_report(message)
 

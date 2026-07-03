@@ -2,6 +2,8 @@ import psycopg2
 import os
 from datetime import datetime, timedelta
 import csv
+import json
+from psycopg2.extras import Json
 
 UNSET = object()
 
@@ -45,6 +47,25 @@ c.execute('''CREATE TABLE IF NOT EXISTS bot_messages (
     source TEXT,
     status TEXT,
     error TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS agent_check_results (
+    id SERIAL PRIMARY KEY,
+    job_id TEXT,
+    agent_id TEXT,
+    country TEXT,
+    region TEXT,
+    provider TEXT,
+    url TEXT,
+    ok BOOLEAN,
+    http JSONB,
+    ssl_days INTEGER,
+    domain_days INTEGER,
+    registrar TEXT,
+    contact_url TEXT,
+    error TEXT,
+    duration_ms INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )''')
 
@@ -504,6 +525,69 @@ def log_bot_message(user_id, source, status="sent", error=None):
     )
     conn.commit()
 
+def log_agent_check_result(payload):
+    c.execute(
+        """
+        INSERT INTO agent_check_results (
+            job_id, agent_id, country, region, provider, url, ok, http,
+            ssl_days, domain_days, registrar, contact_url, error, duration_ms
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            payload.get("job_id"),
+            payload.get("agent_id"),
+            payload.get("country"),
+            payload.get("region"),
+            payload.get("provider"),
+            payload.get("url"),
+            payload.get("ok"),
+            Json(payload.get("http")) if payload.get("http") is not None else None,
+            payload.get("ssl_days"),
+            payload.get("domain_days"),
+            payload.get("registrar"),
+            payload.get("contact_url"),
+            payload.get("error"),
+            payload.get("duration_ms"),
+        )
+    )
+    conn.commit()
+
+def get_latest_agent_results_for_url(url, max_age_minutes=60):
+    since = datetime.utcnow() - timedelta(minutes=max_age_minutes)
+    c.execute(
+        """
+        SELECT DISTINCT ON (agent_id)
+            agent_id, country, region, provider, url, ok, http, ssl_days,
+            domain_days, registrar, contact_url, error, duration_ms, created_at
+        FROM agent_check_results
+        WHERE url = %s
+          AND created_at >= %s
+        ORDER BY agent_id, created_at DESC
+        """,
+        (url, since)
+    )
+    rows = c.fetchall()
+    return [
+        {
+            "agent_id": row[0],
+            "country": row[1],
+            "region": row[2],
+            "provider": row[3],
+            "url": row[4],
+            "ok": row[5],
+            "http": row[6] if not isinstance(row[6], str) else json.loads(row[6]),
+            "ssl_days": row[7],
+            "domain_days": row[8],
+            "registrar": row[9],
+            "contact_url": row[10],
+            "error": row[11],
+            "duration_ms": row[12],
+            "checked_at": row[13],
+        }
+        for row in rows
+    ]
+
 def get_user_logs():
     since = datetime.utcnow() - timedelta(days=14)
     c.execute("SELECT created_at, user_id, username, action FROM user_logs WHERE created_at > %s ORDER BY created_at DESC", (since,))
@@ -851,5 +935,7 @@ def migrate_add_notification_flags():
     c.execute("CREATE INDEX IF NOT EXISTS idx_user_logs_created_at ON user_logs(created_at)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_bot_messages_created_at ON bot_messages(created_at)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_bot_messages_user_id ON bot_messages(user_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_results_url_created_at ON agent_check_results(url, created_at DESC)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_results_agent_id ON agent_check_results(agent_id)")
 
     conn.commit()

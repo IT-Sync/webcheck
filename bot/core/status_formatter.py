@@ -85,7 +85,9 @@ def format_agent_result_line(result):
     location = f"{country}, {region}" if region else country
     error = result.get("error")
     http = result.get("http")
-    header = f"• {agent_id} [{location}]"
+    checked_at = result.get("checked_at")
+    checked_text = f" · {checked_at.strftime('%H:%M UTC')}" if checked_at else ""
+    header = f"• {agent_id} [{location}]{checked_text}"
     if error:
         return f"{header}\n  HTTP: DOWN | {error}"
     if http:

@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from bot.infra.db import log_agent_check_result
+
 
 def utc_now():
     return datetime.now(timezone.utc)
@@ -74,6 +76,10 @@ class AgentRegistry:
 
     async def record_result(self, agent_id: str, payload: dict):
         future = None
+        try:
+            log_agent_check_result(payload)
+        except Exception as e:
+            print(f"Failed to store agent result: {e}")
         async with self._lock:
             now = utc_now()
             if agent_id in self._agents:
