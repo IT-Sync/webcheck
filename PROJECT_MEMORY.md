@@ -71,7 +71,9 @@ The administrative console uses the same dark control-room visual language as
 the Mini App. Its dedicated `/admin/sites` registry lists every customer's
 resource in problem-first order and supports immediate search by domain,
 username, Telegram user ID, or group plus status filtering and direct owner
-navigation. Other administrative tables retain page-level search.
+navigation. Other administrative tables retain page-level search. Every
+non-empty data-table column can be sorted in either direction by mouse or
+keyboard, with type-aware ordering for numbers, timestamps, and text.
 
 ## Production Deployment
 
@@ -113,7 +115,7 @@ and aggregation before history, groups, maintenance, and public status pages.
 
 ## Validation Baseline
 
-The current suite contains 47 passing `unittest` tests. Standard validation is:
+The current suite contains 48 passing `unittest` tests. Standard validation is:
 
 ```bash
 python -m unittest discover -s tests -v

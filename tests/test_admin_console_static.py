@@ -40,6 +40,13 @@ class AdminConsoleStaticTest(unittest.TestCase):
         self.assertIn('X-Content-Type-Options', self.source)
         self.assertIn('feedback_attachment_html(item)', self.source)
 
+    def test_admin_tables_support_accessible_column_sorting(self):
+        self.assertIn("function initializeSortableTables()", self.source)
+        self.assertIn("header.setAttribute('aria-sort', 'none')", self.source)
+        self.assertIn("event.key !== 'Enter' && event.key !== ' '", self.source)
+        self.assertIn("new Intl.Collator('ru'", self.source)
+        self.assertIn("initializeSortableTables();", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

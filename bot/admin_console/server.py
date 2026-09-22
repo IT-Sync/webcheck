@@ -257,6 +257,11 @@ def page(title: str, body: str, active: str = "") -> web.Response:
     table {{ width: 100%; border-collapse: separate; border-spacing: 0; overflow: hidden; background: rgba(12, 25, 22, .94); border: 1px solid var(--line); border-radius: 13px; }}
     th, td {{ padding: 12px 13px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
     th {{ background: #10201c; color: var(--muted); font: 700 9px/1.2 "Courier New", monospace; letter-spacing: .09em; text-transform: uppercase; }}
+    th.sortable {{ cursor: pointer; user-select: none; white-space: nowrap; }}
+    th.sortable::after {{ content: "\u2195"; margin-left: 7px; color: rgba(130, 151, 141, .55); font-size: 11px; }}
+    th.sortable[aria-sort="ascending"]::after {{ content: "\u2191"; color: var(--accent); }}
+    th.sortable[aria-sort="descending"]::after {{ content: "\u2193"; color: var(--accent); }}
+    th.sortable:focus-visible {{ outline: 2px solid var(--accent); outline-offset: -3px; }}
     tbody tr {{ transition: background 150ms ease; }}
     tbody tr:hover {{ background: rgba(184, 243, 74, .035); }}
     tr:last-child td {{ border-bottom: 0; }}
@@ -416,6 +421,69 @@ def page(title: str, body: str, active: str = "") -> web.Response:
     registrySearch?.addEventListener('input', filterSiteRegistry);
     registryStatus?.addEventListener('change', filterSiteRegistry);
     filterSiteRegistry();
+
+    const tableCollator = new Intl.Collator('ru', {{ numeric: true, sensitivity: 'base' }});
+    function sortableValue(text) {{
+      const value = text.trim();
+      const normalizedNumber = value.replace(/\s/g, '').replace(',', '.');
+      if (/^-?\d+(?:\.\d+)?$/.test(normalizedNumber)) {{
+        return {{ kind: 'number', value: Number(normalizedNumber) }};
+      }}
+      if (/^\d{{4}}-\d{{2}}-\d{{2}}(?:\s|T|$)/.test(value)) {{
+        const timestamp = Date.parse(value.replace(' ', 'T'));
+        if (!Number.isNaN(timestamp)) return {{ kind: 'number', value: timestamp }};
+      }}
+      return {{ kind: 'text', value }};
+    }}
+    function compareSortableValues(leftText, rightText) {{
+      const left = sortableValue(leftText);
+      const right = sortableValue(rightText);
+      if (left.kind === 'number' && right.kind === 'number') return left.value - right.value;
+      return tableCollator.compare(String(left.value), String(right.value));
+    }}
+    function initializeSortableTables() {{
+      document.querySelectorAll('table').forEach((table) => {{
+        const body = table.tBodies[0];
+        const headers = [...table.querySelectorAll('thead th')];
+        if (!body || !headers.length) return;
+        const sortableRows = [...body.rows].filter((row) => !row.querySelector('td[colspan]'));
+        if (!sortableRows.length) return;
+        headers.forEach((header, columnIndex) => {{
+          if (!header.textContent.trim()) return;
+          header.classList.add('sortable');
+          header.tabIndex = 0;
+          header.setAttribute('aria-sort', 'none');
+          header.title = 'Сортировать по столбцу';
+          const sortColumn = () => {{
+            const direction = header.getAttribute('aria-sort') === 'ascending' ? 'descending' : 'ascending';
+            headers.forEach((item) => {{
+              if (item.classList.contains('sortable')) item.setAttribute('aria-sort', 'none');
+            }});
+            header.setAttribute('aria-sort', direction);
+            const rows = [...body.rows];
+            const sortedRows = rows
+              .filter((row) => !row.querySelector('td[colspan]'))
+              .map((row, originalIndex) => ({{ row, originalIndex }}))
+              .sort((left, right) => {{
+                const comparison = compareSortableValues(
+                  left.row.cells[columnIndex]?.textContent || '',
+                  right.row.cells[columnIndex]?.textContent || '',
+                );
+                return (comparison || left.originalIndex - right.originalIndex) * (direction === 'ascending' ? 1 : -1);
+              }});
+            const queue = sortedRows.map((item) => item.row);
+            rows.forEach((row) => body.append(row.querySelector('td[colspan]') ? row : queue.shift()));
+          }};
+          header.addEventListener('click', sortColumn);
+          header.addEventListener('keydown', (event) => {{
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            sortColumn();
+          }});
+        }});
+      }});
+    }}
+    initializeSortableTables();
   </script>
 </body>
 </html>"""
