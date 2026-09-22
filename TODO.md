@@ -48,40 +48,49 @@ should not become a chronological changelog.
 These are planned capabilities, not implemented behavior. Retention,
 aggregation, seven-day resource history, groups, search, the searchable
 all-customer site registry, sortable administrative tables, and the feedback
-inbox with media support and bot replies are implemented. Suggested next
-delivery order is longer-period analytics, maintenance windows, then public
-status pages.
+inbox with media support and bot replies are implemented. The current history
+already includes hourly availability, average latency, and a per-agent regional
+breakdown. Incident alerts also provide an auto-expiring one-hour pause.
+Suggested next delivery order is longer-period analytics, full maintenance
+windows, then public status pages.
 
 ### High Priority
 
-- [ ] Availability and response-time charts for daily, weekly, and monthly
-  periods, including average latency and peaks. Hourly agent aggregates now
-  exist; add daily rollups and define how missing checks and planned maintenance
-  affect availability calculations. Introduce structured central incident
-  records because the overwritten central status cannot reconstruct historical
-  checks retrospectively.
+- [ ] Expose selectable daily, weekly, and monthly views over the implemented
+  history endpoint, which already accepts periods up to 90 days while the UI is
+  fixed to seven. Add latency charts and the already collected peak latency to
+  the UI, introduce daily rollups, and define how missing checks and planned
+  maintenance affect availability calculations. Introduce structured central
+  incident records because the overwritten central status cannot reconstruct
+  historical central checks retrospectively.
 - [ ] Add multiple tags per resource alongside the implemented single group,
   search, and group filter.
-- [ ] Maintenance windows: schedule alert suppression with automatic expiry.
-  Make monitoring behavior during maintenance explicit and distinguish planned
-  maintenance from outages in history and reports.
-- [ ] Regional comparison: show per-agent/network availability and distinguish
-  a global outage from a failure limited to one region.
-- [ ] Monitoring health: alert operators when agents disconnect, checks become
-  overdue, or monitoring stops running. Include an independent heartbeat/watchdog
-  so a stopped central process can also be detected.
-- [ ] Configurable multi-agent incident confirmation: allow confirmation across
-  multiple agents while retaining separately configurable alerts for regional
-  failures. Define behavior when agents are unavailable.
+- [ ] Generalize the implemented immediate one-hour incident pause into full
+  maintenance windows with scheduled starts, arbitrary duration, and automatic
+  expiry. Make monitoring behavior during maintenance explicit and distinguish
+  planned maintenance from outages in history and reports.
+- [ ] Extend the implemented per-agent regional availability breakdown to show
+  network/provider comparisons and automatically distinguish a global outage
+  from a failure limited to one region.
+- [ ] Turn the live agent heartbeat and result timestamps already shown in the
+  admin console into durable monitoring-health alerts. Notify operators when
+  agents disconnect, checks become overdue, or monitoring stops running, and
+  include an independent watchdog for a stopped central process.
+- [ ] Use the existing multi-agent alert checks for configurable incident
+  confirmation. Agent results currently enrich notifications after the central
+  threshold is reached; allow them to gate global outage alerts while retaining
+  separately configurable regional alerts and defined unavailable-agent
+  behavior.
 - [ ] Incident acknowledgement: add a "Take ownership" action, track the
   responder and acknowledgement time, and coordinate incident handling with
   notification reminders and future team permissions.
 
 ### Medium Priority
 
-- [ ] Notification preferences: select event types, configure repeat reminders,
-  and notify about prolonged outages. Apply acknowledgement and maintenance
-  rules consistently to avoid duplicate or unwanted notifications.
+- [ ] Make the existing global notification rules configurable per user or
+  resource: select event types, configure repeat reminders, and notify about
+  prolonged outages. Apply acknowledgement and maintenance rules consistently
+  to avoid duplicate or unwanted notifications.
 - [ ] Bulk operations: add resources from a list, assign groups, and pause or
   resume selected sites. Preserve ownership checks, limits, validation, and
   per-resource feedback for partial failures.
@@ -90,8 +99,10 @@ status pages.
   deliberate publication and keep private monitoring details out of public views.
 - [ ] Content and API checks: validate expected HTTP status codes, required page
   text, or JSON values. Preserve public-target validation for new check paths.
-- [ ] DNS change monitoring: notify about changes to IP addresses, NS, and MX
-  records and retain the previous and new values in the event history.
+- [ ] Build DNS change monitoring on the existing last-successful resolved-IP
+  snapshot: detect and notify about IP, NS, and MX changes and retain both the
+  previous and new values in event history instead of only overwriting the
+  current IP.
 
 ### Later
 

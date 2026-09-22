@@ -31,7 +31,10 @@ Current behavior:
 - provides status-counter filters, domain/group search, group filtering, and
   problem-first, name, or recent sorting;
 - supports optional resource groups and a seven-day history view backed by raw
-  and hourly aggregated agent results plus relevant monitoring events;
+  and hourly aggregated agent results plus relevant monitoring events; the view
+  shows hourly availability, average latency, and availability grouped by
+  remote agent and region, while its authenticated API accepts periods from one
+  to 90 days;
 - renders session-cached site data immediately and refreshes it from the server;
 - supports closing the add dialog through its close control, Telegram Back,
   Escape, and backdrop interaction where the web view supports it;
@@ -43,6 +46,20 @@ Current behavior:
 
 Static asset URLs are versioned, and the Mini App shell is served with no-cache
 headers to reduce stale Telegram web-view assets after deployment.
+
+## Monitoring and Incident Controls
+
+HTTP outage alerts use a configurable consecutive-failure threshold and an
+optional central confirmation request. Remote-agent results are then appended
+to the alert for context, but they do not currently decide whether the global
+outage alert is sent. Incident alert actions support an immediate check, history
+view, and a one-hour monitoring pause that expires automatically. Arbitrary or
+scheduled maintenance windows are not implemented.
+
+The admin console shows currently connected agents with their connection,
+heartbeat, and last-result timestamps. Agent state is process-local and is not
+yet retained or converted into disconnect, overdue-check, or central-watchdog
+alerts.
 
 The Mini App includes a feedback action that creates a persisted pending session,
 sends an instruction message to the user's Telegram chat, and closes the Mini
@@ -106,12 +123,13 @@ migrations. Back up PostgreSQL before major releases.
 
 ## Planned Development
 
-The product backlog in `TODO.md` covers longer-period charts, tags, maintenance
-windows, regional comparisons, monitoring health, incident
-confirmation and acknowledgement, notification preferences, bulk operations,
-public status pages, content/API checks, DNS changes, and team access. These
-features are not yet implemented. The proposed sequence starts with retention
-and aggregation before history, groups, maintenance, and public status pages.
+The product backlog in `TODO.md` covers longer-period charts, tags, full
+maintenance windows, automatic global-versus-regional classification,
+monitoring-health alerts, multi-agent incident confirmation, acknowledgement,
+notification preferences, bulk operations, public status pages, content/API
+checks, DNS changes, and team access. Some foundations exist as documented
+above, but these extensions are not yet implemented. The proposed next sequence
+is longer-period analytics, maintenance windows, and public status pages.
 
 ## Validation Baseline
 
