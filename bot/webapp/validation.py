@@ -18,7 +18,7 @@ def is_public_address(address: str) -> bool:
     return ip.is_global
 
 
-async def validate_monitoring_target(value: str) -> str:
+async def validate_monitoring_target(value: str, *, dns_timeout_seconds: float = 3) -> str:
     if not isinstance(value, str) or not value.strip():
         raise TargetValidationError("Укажите домен или адрес сайта")
 
@@ -28,12 +28,17 @@ async def validate_monitoring_target(value: str) -> str:
         raise TargetValidationError("Укажите корректный публичный домен")
 
     try:
-        addresses = await asyncio.to_thread(
-            socket.getaddrinfo,
-            hostname,
-            443,
-            type=socket.SOCK_STREAM,
+        addresses = await asyncio.wait_for(
+            asyncio.to_thread(
+                socket.getaddrinfo,
+                hostname,
+                443,
+                type=socket.SOCK_STREAM,
+            ),
+            timeout=dns_timeout_seconds,
         )
+    except TimeoutError as exc:
+        raise TargetValidationError("DNS-сервер отвечает слишком долго. Попробуйте ещё раз") from exc
     except socket.gaierror as exc:
         raise TargetValidationError("Домен не удалось найти в DNS") from exc
 

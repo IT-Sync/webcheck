@@ -1,6 +1,8 @@
+import asyncio
 import unittest
+from unittest.mock import AsyncMock, patch
 
-from bot.webapp.validation import is_public_address
+from bot.webapp.validation import TargetValidationError, is_public_address, validate_monitoring_target
 
 
 class WebAppTargetValidationTest(unittest.TestCase):
@@ -20,6 +22,11 @@ class WebAppTargetValidationTest(unittest.TestCase):
         ):
             with self.subTest(address=address):
                 self.assertFalse(is_public_address(address))
+
+    def test_dns_lookup_timeout_is_reported(self):
+        with patch("bot.webapp.validation.asyncio.to_thread", AsyncMock(side_effect=TimeoutError)):
+            with self.assertRaisesRegex(TargetValidationError, "слишком долго"):
+                asyncio.run(validate_monitoring_target("example.com"))
 
 
 if __name__ == "__main__":

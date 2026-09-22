@@ -276,11 +276,15 @@
     event.preventDefault();
     elements.formError.classList.add("hidden");
     elements.submit.disabled = true;
-    elements.submit.textContent = "Проверяем адрес…";
+    elements.submit.textContent = "Проверяем DNS…";
+    const slowMessage = window.setTimeout(() => {
+      elements.submit.textContent = "DNS отвечает медленно…";
+    }, 2500);
     try {
       const payload = await api("/api/webapp/sites", {
         method: "POST",
         body: JSON.stringify({ url: elements.input.value }),
+        timeoutMs: 8000,
       });
       state.sites.push(payload.site);
       closeAdd();
@@ -291,6 +295,7 @@
       elements.formError.classList.remove("hidden");
       telegram?.HapticFeedback?.notificationOccurred("error");
     } finally {
+      window.clearTimeout(slowMessage);
       elements.submit.disabled = false;
       elements.submit.textContent = "Добавить в мониторинг";
     }

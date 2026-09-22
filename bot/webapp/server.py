@@ -27,6 +27,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 WEB_APP_ENABLED = os.getenv("WEB_APP_ENABLED", "1") == "1"
 WEB_APP_AUTH_MAX_AGE_SECONDS = int(os.getenv("WEB_APP_AUTH_MAX_AGE_SECONDS", "86400"))
 WEB_APP_MAX_SITES_PER_USER = int(os.getenv("WEB_APP_MAX_SITES_PER_USER", "50"))
+WEB_APP_DNS_TIMEOUT_SECONDS = float(os.getenv("WEB_APP_DNS_TIMEOUT_SECONDS", "3"))
 WEB_APP_CHECK_TIMEOUT_SECONDS = int(os.getenv("WEB_APP_CHECK_TIMEOUT_SECONDS", "10"))
 WEB_APP_AGENT_TIMEOUT_SECONDS = int(os.getenv("WEB_APP_AGENT_TIMEOUT_SECONDS", "5"))
 STATIC_DIR = Path(__file__).with_name("static")
@@ -157,7 +158,10 @@ async def create_site(request: web.Request) -> web.Response:
         )
 
     try:
-        url = await validate_monitoring_target(data.get("url", ""))
+        url = await validate_monitoring_target(
+            data.get("url", ""),
+            dns_timeout_seconds=WEB_APP_DNS_TIMEOUT_SECONDS,
+        )
     except TargetValidationError as exc:
         return _json_error(str(exc), code="invalid_target")
 
