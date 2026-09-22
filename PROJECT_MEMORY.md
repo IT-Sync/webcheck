@@ -32,6 +32,9 @@ Current behavior:
 - renders session-cached site data immediately and refreshes it from the server;
 - supports closing the add dialog through its close control, Telegram Back,
   Escape, and backdrop interaction where the web view supports it;
+- shows a dedicated branded access page instead of the monitoring dashboard when
+  `/app/` is opened without signed Telegram `initData`, and performs no API
+  requests in that mode;
 - validates new domains with a bounded DNS lookup and rejects non-public IPs;
 - moves blocking central DNS and TLS socket work outside the asyncio event loop.
 
@@ -69,7 +72,7 @@ migrations. Back up PostgreSQL before major releases.
 
 ## Validation Baseline
 
-The current suite contains 28 passing `unittest` tests. Standard validation is:
+The current suite contains 29 passing `unittest` tests. Standard validation is:
 
 ```bash
 python -m unittest discover -s tests -v

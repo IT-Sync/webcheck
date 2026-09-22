@@ -5,16 +5,64 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#07110f">
+  <meta name="robots" content="noindex, nofollow">
   <title>Webcheck</title>
-  <link rel="stylesheet" href="/app/static/app.css?v=5">
+  <link rel="stylesheet" href="/app/static/app.css?v=6">
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <script src="/app/static/app.js?v=5" defer></script>
+  <script src="/app/static/app.js?v=6" defer></script>
 </head>
 <body>
   <div class="ambient ambient-a" aria-hidden="true"></div>
   <div class="ambient ambient-b" aria-hidden="true"></div>
 
-  <main class="shell">
+  <main class="access-gate" id="access-gate" hidden>
+    <header class="gate-topbar">
+      <a class="brand" href="/app/" aria-label="Webcheck">
+        <span class="brand-mark"><i></i><i></i><i></i></span>
+        <span>webcheck</span>
+      </a>
+      <span class="gate-code">TG / ACCESS ONLY</span>
+    </header>
+
+    <section class="gate-stage">
+      <div class="gate-copy">
+        <p class="eyebrow">SECURE MONITORING CHANNEL</p>
+        <h1>Панель работает<br><em>внутри Telegram.</em></h1>
+        <p class="gate-lead">Webcheck открывает данные мониторинга только после безопасного входа через вашего Telegram-бота.</p>
+        <a class="telegram-button" id="open-telegram" href="https://t.me/">
+          <span class="telegram-mark" aria-hidden="true">↗</span>
+          Открыть Telegram
+        </a>
+      </div>
+
+      <div class="gate-beacon" aria-hidden="true">
+        <span class="gate-ring gate-ring-outer"></span>
+        <span class="gate-ring gate-ring-inner"></span>
+        <span class="gate-sweep"></span>
+        <span class="gate-lock">TG</span>
+      </div>
+    </section>
+
+    <section class="gate-instruction" aria-label="Как открыть приложение">
+      <span class="instruction-number">01</span>
+      <div>
+        <b>Вернитесь в чат с ботом</b>
+        <p>Нажмите кнопку меню Webcheck или отправьте команду <code>/app</code>.</p>
+      </div>
+      <span class="gate-status"><i></i> protected</span>
+    </section>
+
+    <footer>
+      <span>WEB/CHECK NODE</span>
+      <span>TELEGRAM AUTH REQUIRED</span>
+    </footer>
+  </main>
+
+  <noscript>
+    <div class="noscript-message">Для работы Webcheck необходимо включить JavaScript и открыть приложение из Telegram-бота.</div>
+  </noscript>
+
+  <main class="shell" id="app-shell" hidden>
     <header class="topbar reveal">
       <a class="brand" href="/app/" aria-label="Webcheck">
         <span class="brand-mark"><i></i><i></i><i></i></span>

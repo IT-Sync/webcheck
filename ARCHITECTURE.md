@@ -67,6 +67,13 @@ packages above.
 5. Existing site rows are serialized into status kinds: `up`, `down`, `warning`,
    `pending`, or `paused`.
 
+When `/app/` is opened outside Telegram, the static shell detects the absence of
+`initData`, displays a dedicated access page, and stops before registering the
+dashboard or making API requests. The monitoring dashboard remains hidden by
+default and is revealed only for a Telegram-authenticated launch. Server-side
+API authentication remains authoritative; the client-side gate is a presentation
+and request-avoidance measure, not an authorization boundary.
+
 The frontend immediately renders a per-user `sessionStorage` snapshot when
 available, then refreshes `/api/webapp/bootstrap`. Metrics act as status filters,
 and the default client-side sort places problematic resources first. The cache

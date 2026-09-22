@@ -205,6 +205,11 @@ no data migration. Mutating API operations verify both the site ID and the
 authenticated Telegram user ID. The resource list is cached only in Telegram's
 current web view session and is refreshed from the server on every opening.
 
+Opening `/app/` in a regular browser shows a branded Telegram access page rather
+than the monitoring dashboard. The frontend does not call the Mini App API until
+Telegram provides signed `initData`; server-side signature validation remains
+the actual security boundary.
+
 Resource metrics are interactive filters. The default sort order places DOWN,
 warning, and pending resources before healthy and paused resources. Users can
 also sort by name or most recent check.

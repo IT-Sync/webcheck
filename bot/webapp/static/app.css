@@ -15,6 +15,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 html { background: var(--ink); }
 
@@ -37,6 +38,7 @@ body.dialog-open { overflow: hidden; }
 
 button, input { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
+code { font-family: "Courier New", monospace; }
 
 .ambient {
   position: fixed;
@@ -50,6 +52,45 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .ambient-a { top: -120px; right: -100px; background: var(--acid); }
 .ambient-b { top: 45vh; left: -180px; background: var(--cyan); }
+
+.access-gate {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  width: min(100%, 1080px);
+  min-height: 100svh;
+  margin: 0 auto;
+  padding: max(24px, env(safe-area-inset-top)) clamp(20px, 5vw, 64px) var(--safe-bottom);
+}
+.gate-topbar { display: flex; align-items: center; justify-content: space-between; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.gate-code { color: var(--muted); font: 700 9px/1 "Courier New", monospace; letter-spacing: 0.18em; }
+.gate-stage { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr); align-items: center; gap: clamp(34px, 7vw, 90px); padding: clamp(54px, 10vh, 110px) 0; }
+.gate-copy { position: relative; z-index: 2; }
+.gate-copy h1 { max-width: 760px; margin: 0; font: 400 clamp(48px, 8vw, 92px)/0.9 Georgia, "Times New Roman", serif; letter-spacing: -0.06em; }
+.gate-copy h1 em { color: var(--acid); font-weight: 400; }
+.gate-lead { max-width: 570px; margin: 28px 0 30px; color: #9aada3; font-size: clamp(14px, 1.7vw, 17px); line-height: 1.65; }
+.telegram-button { display: inline-flex; align-items: center; gap: 12px; padding: 14px 22px 14px 14px; border: 1px solid var(--acid); border-radius: 999px; background: var(--acid); color: #13200c; font-weight: 800; text-decoration: none; box-shadow: 0 14px 44px rgba(184, 243, 74, 0.11); transition: transform 180ms ease, box-shadow 180ms ease; }
+.telegram-button:hover, .telegram-button:focus-visible { outline: 0; transform: translateY(-2px); box-shadow: 0 18px 52px rgba(184, 243, 74, 0.2); }
+.telegram-mark { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: #13200c; color: var(--acid); font-size: 16px; }
+.gate-beacon { position: relative; width: min(34vw, 330px); aspect-ratio: 1; justify-self: center; border: 1px solid rgba(184, 243, 74, 0.12); border-radius: 50%; background: radial-gradient(circle, rgba(184, 243, 74, 0.09), transparent 60%); box-shadow: inset 0 0 70px rgba(184, 243, 74, 0.025), 0 0 100px rgba(74, 199, 184, 0.05); overflow: hidden; }
+.gate-beacon::before, .gate-beacon::after { content: ""; position: absolute; background: rgba(184, 243, 74, 0.12); }
+.gate-beacon::before { top: 50%; left: 8%; width: 84%; height: 1px; }
+.gate-beacon::after { top: 8%; left: 50%; width: 1px; height: 84%; }
+.gate-ring { position: absolute; inset: 50%; border: 1px solid rgba(184, 243, 74, 0.2); border-radius: 50%; transform: translate(-50%, -50%); }
+.gate-ring-outer { width: 72%; height: 72%; }
+.gate-ring-inner { width: 38%; height: 38%; border-style: dashed; animation: gate-spin 12s linear infinite; }
+.gate-sweep { position: absolute; top: 50%; left: 50%; width: 42%; height: 1px; background: linear-gradient(90deg, var(--acid), transparent); transform-origin: left center; animation: radar 3.8s linear infinite; }
+.gate-lock { position: absolute; top: 50%; left: 50%; display: grid; width: 58px; height: 58px; place-items: center; border: 1px solid var(--acid); border-radius: 50%; background: #0b1714; color: var(--acid); font: 800 12px/1 "Courier New", monospace; letter-spacing: 0.08em; transform: translate(-50%, -50%); box-shadow: 0 0 32px rgba(184, 243, 74, 0.24); }
+.gate-instruction { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 18px; padding: 22px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.instruction-number { color: var(--acid); font: 700 11px/1 "Courier New", monospace; }
+.gate-instruction b { font: 400 20px/1.2 Georgia, serif; }
+.gate-instruction p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+.gate-instruction code { color: var(--paper); }
+.gate-status { display: flex; align-items: center; gap: 7px; color: var(--muted); font: 700 9px/1 "Courier New", monospace; letter-spacing: 0.12em; text-transform: uppercase; }
+.gate-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--acid); box-shadow: 0 0 9px var(--acid); }
+.access-gate footer { margin-top: 28px; }
+.noscript-message { position: relative; z-index: 2; width: min(620px, calc(100% - 40px)); margin: 25vh auto 0; padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); color: var(--paper); text-align: center; }
 
 .shell {
   position: relative;
@@ -190,9 +231,24 @@ dialog::backdrop { background: rgba(0, 7, 5, 0.78); backdrop-filter: blur(8px); 
 @keyframes pulse { 50% { opacity: 0.35; box-shadow: 0 0 2px var(--acid); } }
 @keyframes orbit-pulse { 0% { transform: translate(-50%, -50%) scale(0.55); opacity: 0; } 35% { opacity: 0.6; } 100% { transform: translate(-50%, -50%) scale(1.25); opacity: 0; } }
 @keyframes radar { to { transform: rotate(360deg); } }
+@keyframes gate-spin { from { transform: translate(-50%, -50%) rotate(0); } to { transform: translate(-50%, -50%) rotate(360deg); } }
 @keyframes shimmer { to { background-position: -200% 0; } }
 
+@media (max-width: 720px) {
+  .gate-stage { grid-template-columns: 1fr; align-content: center; padding: 48px 0 34px; }
+  .gate-beacon { position: absolute; top: 18%; right: -25%; width: 280px; opacity: 0.42; }
+  .gate-copy h1 { font-size: clamp(45px, 14vw, 70px); }
+  .gate-copy h1, .gate-lead { max-width: 540px; }
+  .gate-instruction { grid-template-columns: auto 1fr; }
+  .gate-status { display: none; }
+}
+
 @media (max-width: 480px) {
+  .gate-code { max-width: 120px; line-height: 1.4; text-align: right; }
+  .gate-stage { min-height: 58vh; }
+  .gate-copy h1 { font-size: clamp(43px, 14vw, 62px); }
+  .telegram-button { width: 100%; justify-content: center; }
+  .gate-instruction { align-items: start; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
   .hero { min-height: 246px; }
   .signal-orbit { opacity: 0.72; right: -72px; }

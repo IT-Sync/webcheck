@@ -2,6 +2,17 @@
   "use strict";
 
   const telegram = window.Telegram?.WebApp;
+  const accessGate = document.querySelector("#access-gate");
+  const appShell = document.querySelector("#app-shell");
+
+  if (!telegram?.initData) {
+    accessGate.hidden = false;
+    document.body.classList.add("direct-access");
+    return;
+  }
+
+  appShell.hidden = false;
+  document.body.classList.add("telegram-access");
   const state = { sites: [], user: null, limit: 0, loaded: false, filter: "all", sort: "priority" };
   const elements = {
     list: document.querySelector("#site-list"),
@@ -304,7 +315,6 @@
   async function load() {
     hideNotice();
     try {
-      if (!telegram?.initData) throw new Error("Откройте приложение из Telegram-бота, чтобы войти безопасно.");
       const payload = await api("/api/webapp/bootstrap", { timeoutMs: 10000 });
       applyBootstrap(payload);
     } catch (error) {
