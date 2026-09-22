@@ -1,210 +1,289 @@
-# Webcheck Bot
+# Webcheck
 
-Телеграм‑бот для мониторинга сайтов: проверяет HTTP‑доступность, срок действия SSL‑сертификата, дату окончания домена, собирает GeoIP‑информацию и пишет журнал действий пользователей. Проект разворачивается в Docker и использует PostgreSQL.
+Webcheck is a Telegram-first website monitoring service. It checks HTTP
+availability, TLS certificate lifetime, domain registration lifetime, and
+GeoIP data. Users can manage the same monitored resources from the Telegram bot
+or the Telegram Mini App. Operators have a separate administrative console, and
+remote agents can run checks from other networks or regions.
 
-## Возможности
-- Добавление сайтов простым сообщением или через `/list` / inline‑кнопки.
-- Автоматический мониторинг по расписанию (APSheduler) + уведомления в чат.
-- Отчёты по статусу сайтов: `/statusme`, `/status`, inline‑кнопка «📊 Статус».
-- Управление сайтами: `/delete`, inline «🗑 Удалить», админское удаление `/remove_user`.
-- Поиск поддоменов `/subdomains` и выгрузка результатов в CSV.
-- Экспорт логов `/export_logs` и списка сайтов `/export_sites`.
+The service is designed for in-place upgrades: existing PostgreSQL data is kept,
+schema changes are additive, and the current bot commands and agent protocol
+remain compatible.
 
-## Технологии
-- Python 3.11, aiogram, asyncio, APScheduler.
-- PostgreSQL 15 (psycopg2).
-- Дополнительные сервисы: whois/ipwhois, aiohttp, BeautifulSoup.
-- Docker / docker‑compose для деплоя.
+## Features
 
-## Переменные окружения (`.env`)
+- Scheduled HTTP, TLS, WHOIS, and GeoIP checks with Telegram alerts.
+- Consecutive-failure thresholds and a confirming check before a DOWN alert.
+- Telegram commands and inline controls for adding, checking, pausing, resuming,
+  and deleting resources.
+- Telegram Mini App with the current resource status, manual checks, resource
+  management, status filters, and problem-first sorting.
+- Fast Mini App startup from a session cache while current data loads in the
+  background.
+- Bounded DNS validation when a site is added, including rejection of private,
+  loopback, link-local, and other non-public targets.
+- Administrative console with user, site, event, message, and agent management.
+- Authenticated outbound WebSocket agents for checks from remote locations.
+- CSV exports for logs, sites, and subdomain discovery results.
+
+## Technology
+
+- Python 3.11, asyncio, aiogram 3, aiohttp, and APScheduler.
+- PostgreSQL 15 through psycopg2.
+- Vanilla HTML, CSS, and JavaScript with the Telegram Web App SDK. The Mini App
+  has no Node.js build step or frontend framework.
+- aiohttp, cryptography, python-whois, ipwhois, and BeautifulSoup for checks and
+  enrichment.
+- Docker Compose for deployment and Nginx with TLS for public access.
+- Standard-library `unittest` tests.
+
+## Repository Layout
+
+```text
+bot/
+  main.py              Central application entry point
+  telegram/            Bot handlers, callbacks, scheduler, and notifications
+  webapp/              Telegram Mini App API, authentication, validation, assets
+  admin_console/       Operator web console and shared aiohttp server
+  agent_server/        WebSocket server and connected-agent registry
+  checks/              HTTP, TLS, WHOIS, GeoIP, and subdomain checks
+  infra/               PostgreSQL access and additive startup migrations
+  core/                Formatting and URL helpers
+agent/                  Standalone remote checking agent
+docs/                   Architecture and review documentation
+tests/                  Unit tests
 ```
-BOT_TOKEN=Токен_бота_от_BotFather
-BOT_OWNER_ID=123456789              # Telegram ID администратора
-CHECK_INTERVAL_MINUTES=2            # интервал фоновых проверок
-HTTP_FAILURE_THRESHOLD=4            # сколько HTTP-провалов подряд считать инцидентом
-MAX_CONCURRENT_CHECKS=30            # сколько сайтов проверять параллельно внутри одного прохода
-MONITOR_MAX_INSTANCES=1             # сколько проходов мониторинга может идти одновременно
-MONITOR_HTTP_RETRIES=2              # попыток HTTP в фоновой проверке
-MONITOR_HTTP_TIMEOUT_SECONDS=10     # timeout одной HTTP-попытки
-MONITOR_HTTP_DELAY_SECONDS=2        # пауза между retry
-MONITOR_CONFIRM_DOWN_ENABLED=1      # подтверждать DOWN перед первым алертом
-MONITOR_CONFIRM_HTTP_RETRIES=2      # попыток в подтверждающей проверке
-MONITOR_CONFIRM_HTTP_TIMEOUT_SECONDS=10
-MONITOR_CONFIRM_HTTP_DELAY_SECONDS=2
-DB_NAME=devcheck
-DB_USER=devuser
-DB_PASS=devpass
-DB_HOST=db                          # имя сервиса в docker-compose
-DB_PORT=5432
-```
-> Локально можно использовать `localhost` в `DB_HOST`, если бот запускается вне Docker.
 
-## Быстрый старт (Docker)
-1. Создайте файл `.env` рядом с `docker-compose.yml` и заполните переменные из таблицы выше.
-2. Запустите стек:
-   ```bash
-   docker compose up -d --build
-   ```
-3. Проверьте логи бота:
-   ```bash
-   docker compose logs -f devcheck-bot
-   ```
-4. Остановить:
-   ```bash
-   docker compose down
-   ```
-   Данные PostgreSQL лежат в `./pgdata`.
+The top-level modules such as `bot/db.py`, `bot/monitor.py`, and
+`bot/handlers.py` are compatibility wrappers for older imports.
 
-## Безопасное обновление
-Данные пользователей хранятся в PostgreSQL-каталоге `./pgdata`, который подключён в `docker-compose.yml` как `/var/lib/postgresql/data`. Пересборка и обновление контейнера бота этот каталог не удаляют:
+## Configuration
+
+Copy the example and replace every placeholder secret:
+
 ```bash
-docker compose up -d --build
+cp .env.example .env
 ```
 
-При старте приложение выполняет только идемпотентные операции схемы: `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN` при отсутствии колонок и `CREATE INDEX IF NOT EXISTS`. Автоматических `DROP`, `TRUNCATE` или очистки пользовательских таблиц при обновлении нет.
+The production port allocation is:
 
-Не удаляйте каталог `./pgdata` перед обновлением. Для резервной копии перед крупным релизом можно выполнить:
-```bash
-docker compose exec db pg_dump -U "${DB_USER:-devuser}" "${DB_NAME:-devcheck}" > backup_$(date +%Y%m%d_%H%M%S).sql
-```
+- `11003` — admin console, Mini App, and `/api/webapp/*` over HTTP inside the
+  private network;
+- `11001` — remote-agent WebSocket server. Keep `AGENT_WS_PORT=11001` unchanged.
 
-## Web-консоль администратора
-Админ-консоль запускается вместе с ботом, если в `.env` задан `ADMIN_WEB_TOKEN`.
-
-Переменные:
-```
-# Необязательно. Без этой переменной бот запустится без web-консоли.
-ADMIN_WEB_TOKEN=длинный_случайный_токен
-ADMIN_WEB_HOST=0.0.0.0
-ADMIN_WEB_PORT=8080
-```
-
-В Docker порт опубликован только на localhost хоста:
-```
-http://127.0.0.1:8080/admin/
-```
-
-В консоли доступны:
-- статистика по пользователям, сайтам, логам и событиям;
-- графики активности пользователей и общего числа отправленных ботом сообщений;
-- просмотр пользователей, сайтов, логов и событий мониторинга;
-- пауза/возобновление/удаление сайтов;
-- удаление данных пользователя;
-- отправка сообщения одному пользователю от имени бота;
-- массовая отправка сообщения всем известным пользователям от имени бота.
-
-## Telegram Mini App
-
-The customer web application runs inside Telegram and uses the same sites and
-statuses as the bot. Users can view a summary, add sites, run checks, pause
-monitoring, and remove their resources.
-
-Authorization is performed on the server using signed Telegram `initData`. The
-Mini App never accepts a Telegram ID from the client without signature validation
-and does not require a separate users table, so existing data continues to work
-without migration.
-
-Configuration:
+The most important settings are shown below. See [.env.example](.env.example)
+for the complete list.
 
 ```env
+BOT_TOKEN=replace_with_botfather_token
+BOT_OWNER_ID=123456789
+
+DB_NAME=devcheck
+DB_USER=devuser
+DB_PASS=replace_with_database_password
+DB_HOST=db
+DB_PORT=5432
+
+ADMIN_WEB_TOKEN=replace_with_a_long_random_token
+ADMIN_WEB_HOST=0.0.0.0
+ADMIN_WEB_PORT=11003
+
 WEB_APP_ENABLED=1
-WEB_APP_URL=https://monitor.example.com/app/
+WEB_APP_URL=https://webcheck.example.com/app/
 WEB_APP_AUTH_MAX_AGE_SECONDS=86400
 WEB_APP_MAX_SITES_PER_USER=50
 WEB_APP_DNS_TIMEOUT_SECONDS=3
 WEB_APP_CHECK_TIMEOUT_SECONDS=10
 WEB_APP_AGENT_TIMEOUT_SECONDS=5
-```
 
-`WEB_APP_URL` must be a public HTTPS URL. Configure a reverse proxy to
-`127.0.0.1:${ADMIN_WEB_PORT:-8080}` for both `/app/` and `/api/webapp/`, then
-restart the application. On startup, the bot installs the Webcheck menu button,
-while `/start` and `/app` display an inline button that launches the Mini App.
-
-The Mini App and administrative console run in one aiohttp application but use
-independent authorization: `/app/` uses Telegram `initData`, while `/admin/` uses
-`ADMIN_WEB_TOKEN`.
-
-## Remote Agent
-Подпроект агента находится в `agent/`. Агент запускается отдельным Docker-контейнером на удалённом сервере, сам подключается к центральному серверу по WebSocket и выполняет проверки ресурсов из своей страны/сети.
-
-Серверная часть включается переменными:
-```
-AGENT_WS_TOKEN=общий_секрет_для_агентов
+AGENT_WS_TOKEN=replace_with_a_separate_agent_token
 AGENT_WS_HOST=0.0.0.0
-AGENT_WS_PORT=8090
+AGENT_WS_PORT=11001
 AGENT_WS_PATH=/ws/agents
 AGENT_WS_PUBLISH_HOST=0.0.0.0
-AGENT_CHECKS_ENABLED=1
-AGENT_CHECK_TIMEOUT_SECONDS=30
-AGENT_ALERT_CHECK_TIMEOUT_SECONDS=3
-AGENT_BACKGROUND_CHECK_TIMEOUT_SECONDS=5
 ```
 
-В Docker порт агента публикуется отдельно от админки. Если агент запускается в контейнере и подключается через `host.docker.internal`, порт должен быть опубликован не только на `127.0.0.1`, а на `0.0.0.0` или конкретный адрес docker gateway.
+`WEB_APP_URL` must be the public HTTPS URL ending in `/app/`. At startup the bot
+sets this URL as its Telegram menu button; `/start` and `/app` also provide a
+button that opens the Mini App.
 
-Само приложение слушает обычный `ws://`. Для публичного `wss://` обычно ставится TLS reverse proxy, который проксирует наружный адрес на внутренний `ws://127.0.0.1:8090/ws/agents`.
+Never commit `.env`, Telegram tokens, web tokens, database dumps, or `pgdata/`.
 
-Быстрый старт:
+## Start with Docker Compose
+
+```bash
+docker compose up -d --build
+docker compose logs --tail=150 devcheck-bot
+```
+
+Expected startup messages include:
+
+```text
+Admin web console started on http://0.0.0.0:11003/admin/
+Telegram Mini App started on http://0.0.0.0:11003/app/
+Agent WebSocket server started on ws://0.0.0.0:11001/ws/agents
+```
+
+Stop containers without removing customer data:
+
+```bash
+docker compose down
+```
+
+Do not add `-v` and do not delete `./pgdata`.
+
+## Nginx on a Separate Host
+
+When Nginx runs on another server, port `11003` must be bound to a private
+address reachable from that server. A `127.0.0.1:11003` Docker publication is
+not reachable remotely and results in `502 Bad Gateway`. Restrict access to the
+Nginx host with the firewall.
+
+Example configuration for an application host at `10.1.0.4`:
+
+```nginx
+upstream webcheck_http {
+    server 10.1.0.4:11003;
+    keepalive 16;
+}
+
+upstream webcheck_agents {
+    server 10.1.0.4:11001;
+}
+
+server {
+    listen 443 ssl;
+    server_name webcheck.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/webcheck.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/webcheck.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://webcheck_http;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /ws/agents {
+        proxy_pass http://webcheck_agents;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 90s;
+    }
+}
+```
+
+Verify connectivity from the Nginx host before reloading Nginx:
+
+```bash
+curl -i http://10.1.0.4:11003/app/
+curl -i http://10.1.0.4:11001/health
+nginx -t
+systemctl reload nginx
+```
+
+## Telegram Mini App
+
+The Mini App and admin console share one aiohttp listener on port `11003`, but
+they use independent authentication:
+
+- `/app/` serves the Mini App frontend;
+- `/api/webapp/*` validates signed Telegram `initData` using the bot token;
+- `/admin/` requires `ADMIN_WEB_TOKEN`;
+- the client never supplies a trusted Telegram user ID directly.
+
+The Mini App reuses existing rows keyed by `sites.user_id`; enabling it requires
+no data migration. Mutating API operations verify both the site ID and the
+authenticated Telegram user ID. The resource list is cached only in Telegram's
+current web view session and is refreshed from the server on every opening.
+
+Resource metrics are interactive filters. The default sort order places DOWN,
+warning, and pending resources before healthy and paused resources. Users can
+also sort by name or most recent check.
+
+Adding a site validates DNS but does not perform a full HTTP/TLS/WHOIS check in
+the request path. DNS work has a configurable timeout, and blocking DNS and TLS
+operations run outside the asyncio event loop. The first complete result is
+produced by the scheduler or by **Check now**.
+
+## Remote Agents
+
+The central WebSocket listener uses port `11001`. Agents initiate outbound
+connections, authenticate with `AGENT_WS_TOKEN`, receive check jobs, and return
+structured results. Public agents normally connect through:
+
+```env
+SERVER_WS_URL=wss://webcheck.example.com/ws/agents
+```
+
+Start an agent on a remote host:
+
 ```bash
 cd agent
 cp .env.example .env
 docker compose up -d --build
+docker compose logs -f webcheck-agent
 ```
 
-В `.env` агента порт указывается прямо в `SERVER_WS_URL`, например:
-```
-SERVER_WS_URL=wss://your-domain.example:443/ws/agents
-```
+See [agent/README.md](agent/README.md) for its configuration and protocol.
 
-Для агента в Docker на той же машине без TLS:
-```
-SERVER_WS_URL=ws://host.docker.internal:8090/ws/agents
-```
+## Safe In-place Update
 
-Когда `AGENT_CHECKS_ENABLED=1`, живые проверки и фоновый мониторинг добавляют в статус блок с результатами online-агентов и их странами. Для DOWN/RECOVERY уведомлений используется короткое ожидание `AGENT_ALERT_CHECK_TIMEOUT_SECONDS`, чтобы агентские проверки попали в то же сообщение и не задерживали алерт надолго. Для обычного фонового обновления статуса используется `AGENT_BACKGROUND_CHECK_TIMEOUT_SECONDS`, чтобы агенты не растягивали весь проход мониторинга.
+Back up PostgreSQL before a major release:
 
-Если в логах видно `maximum number of running instances reached`, значит один проход мониторинга длится дольше `CHECK_INTERVAL_MINUTES`. Сначала увеличьте `MAX_CONCURRENT_CHECKS` или `CHECK_INTERVAL_MINUTES`, либо уменьшите `AGENT_BACKGROUND_CHECK_TIMEOUT_SECONDS`. `MONITOR_MAX_INSTANCES=2` можно включать только осознанно: параллельные проходы быстрее разгружают очередь, но могут одновременно обновлять состояние одного и того же сайта.
-
-## Локальный запуск без Docker
-1. Установите PostgreSQL и создайте БД/пользователя из `.env`.
-2. Активируйте виртуальное окружение и зависимости:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
-3. Экспортируйте переменные (`export $(cat .env | xargs)` или используйте `python-dotenv`).
-4. Запустите бота:
-   ```bash
-   python -m bot.main
-   ```
-
-## Структура проекта
-```
-bot/
-  main.py             # входная точка, запускает aiogram + планировщик
-  telegram/           # Telegram-команды, inline-обработчики, scheduler
-  checks/             # HTTP/SSL/WHOIS/GeoIP-проверки и поиск поддоменов
-  checks/service.py   # общий сервис проверки ресурса для UI и будущих агентов
-  infra/              # PostgreSQL и инфраструктурные адаптеры
-  core/               # форматтеры, URL-утилиты и общие helpers
+```bash
+docker compose exec -T db pg_dump -U "${DB_USER:-devuser}" "${DB_NAME:-devcheck}" > "backup_$(date +%Y%m%d_%H%M%S).sql"
 ```
 
-Старые модули верхнего уровня (`bot/monitor.py`, `bot/db.py` и т.п.) оставлены как compatibility-wrapper'ы для существующих импортов.
+Then update only the application container:
 
-Дополнительная архитектурная заметка по будущему websocket-агенту: `docs/architecture.md`.
+```bash
+docker compose build devcheck-bot
+docker compose up -d --no-deps devcheck-bot
+docker compose logs --tail=150 devcheck-bot
+```
 
-## Админские команды
-- `/admin` — список всех сайтов и пользователи, с inline‑удалением.
-- `/status` — статусы всех сайтов.
-- `/events` / `/logs` — события мониторинга и действия пользователей за 14 дней.
-- `/export_logs`, `/export_sites` — выгрузка CSV.
-- `/remove_user <user_id>` — полностью удалить сайты и логи пользователя.
+The bind-mounted `./pgdata` directory is not replaced by this operation. Startup
+migrations use additive, idempotent operations and do not automatically run
+`DROP`, `TRUNCATE`, or user-data cleanup statements. Rollback consists of
+starting the previous application image; the Mini App changes do not require a
+database rollback.
 
-## Полезные заметки
-- При старте `bot/main.py` вызывает `migrate_add_notification_flags()` для добавления недостающих колонок в таблице `sites`.
-- Расписание проверок задаётся в `scheduler.py`; при необходимости отрегулируйте интервал.
-- Логи действий пишутся в БД (`user_logs`) через `log_user_action`, их удобно использовать для аудита.
+After deployment, fully close and reopen the Telegram Mini App, then verify:
 
-Готово! После развертывания добавьте бота в Telegram и отправьте `/start`, чтобы протестировать функционал.
+1. Existing resources load and problem-first sorting is active.
+2. The status counters filter the resource list.
+3. The add dialog closes using its close button, Telegram Back, Escape, and a
+   backdrop tap where supported.
+4. Adding a temporary public domain completes within the configured DNS timeout.
+5. Pause, resume, manual check, and delete affect only the current user's site.
+6. Bot polling, scheduled monitoring, admin console, and remote agents continue
+   to operate.
+
+## Local Development and Tests
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
+python -m bot.main
+```
+
+Run the automated checks:
+
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q bot agent tests
+```
+
+More detail is available in [docs/architecture.md](docs/architecture.md) and
+[docs/architecture-review.md](docs/architecture-review.md).

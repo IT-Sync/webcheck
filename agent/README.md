@@ -1,48 +1,79 @@
-# Webcheck Agent
+# Webcheck Remote Agent
 
-Отдельный агент проверки ресурсов. Запускается на удалённом сервере, сам подключается к центральному серверу по WebSocket, получает задания и возвращает результат проверки из своей сети/страны.
+The remote agent runs on a separate server, opens an outbound authenticated
+WebSocket connection to the central Webcheck service, receives check jobs, and
+returns results from its own network and location.
 
-## Быстрый старт
+## Quick Start
 
-1. Создайте `.env` рядом с этим файлом:
+1. Create the agent configuration:
+
    ```bash
    cp .env.example .env
    ```
-2. Заполните `SERVER_WS_URL`, `AGENT_TOKEN`, `AGENT_ID`, `AGENT_COUNTRY`.
-   Порт указывается прямо в URL:
+
+2. Set `SERVER_WS_URL`, `AGENT_TOKEN`, `AGENT_ID`, and `AGENT_COUNTRY`. The token
+   must match the central server's `AGENT_WS_TOKEN`.
+
+   For a public TLS endpoint:
+
    ```env
-   SERVER_WS_URL=wss://your-domain.example:443/ws/agents
+   SERVER_WS_URL=wss://webcheck.example.com/ws/agents
    ```
-   Для локальной проверки без TLS можно использовать:
+
+   For an agent container connecting directly to the central host without TLS:
+
    ```env
-   SERVER_WS_URL=ws://host.docker.internal:8090/ws/agents
+   SERVER_WS_URL=ws://10.1.0.4:11001/ws/agents
    ```
-   Если агент запускается не в контейнере, подойдёт `ws://127.0.0.1:8090/ws/agents`.
-3. Запустите:
+
+3. Build and start the container:
+
    ```bash
    docker compose up -d --build
-   ```
-4. Логи:
-   ```bash
    docker compose logs -f webcheck-agent
    ```
 
-## Протокол
+The central production listener uses `AGENT_WS_PORT=11001`. Do not point an agent
+at the Mini App/admin port `11003`.
 
-Агент подключается к серверу и отправляет:
+## Configuration
+
+```env
+AGENT_ID=mars-moscow
+AGENT_COUNTRY=RU
+AGENT_REGION=Moscow
+AGENT_PROVIDER=
+SERVER_WS_URL=wss://webcheck.example.com/ws/agents
+AGENT_TOKEN=replace_with_the_central_agent_token
+
+AGENT_HEARTBEAT_SECONDS=30
+AGENT_RECONNECT_MIN_SECONDS=2
+AGENT_RECONNECT_MAX_SECONDS=60
+AGENT_MAX_CONCURRENT_CHECKS=5
+AGENT_CHECK_TIMEOUT_SECONDS=45
+HTTP_ALLOW_PLAIN_FALLBACK=1
+```
+
+The agent reconnects with bounded backoff and sends heartbeats over the existing
+connection. It does not require an inbound port.
+
+## Protocol
+
+After connecting, the agent sends:
 
 ```json
 {
   "type": "agent.hello",
-  "agent_id": "server-a",
+  "agent_id": "mars-moscow",
   "country": "RU",
   "region": "Moscow",
   "provider": "",
-  "token": "secret"
+  "token": "shared-agent-secret"
 }
 ```
 
-Сервер отправляет задание:
+The server sends a check request:
 
 ```json
 {
@@ -54,13 +85,13 @@
 }
 ```
 
-Агент отвечает:
+The agent returns:
 
 ```json
 {
   "type": "check.result",
   "job_id": "uuid",
-  "agent_id": "server-a",
+  "agent_id": "mars-moscow",
   "country": "RU",
   "region": "Moscow",
   "ok": true,
@@ -77,3 +108,6 @@
   "error": null
 }
 ```
+
+See `../docs/architecture.md` for routing, authentication, and compatibility
+details.

@@ -24,6 +24,11 @@ Site mutations always include both the site ID and the authenticated Telegram us
 ID, preventing cross-account access. New targets reject private, loopback,
 link-local, and otherwise non-public resolved addresses.
 
+The current UI also preserves operational compatibility: it derives all metrics
+and filters from the existing site payload, sorts problematic resources first
+without changing database order, and uses a per-user session cache only as a
+temporary first paint before refreshing authoritative data.
+
 ## Current Strengths
 
 - Monitoring, Telegram UI, infrastructure, formatting, and remote-agent concerns
@@ -111,17 +116,34 @@ Recommended follow-up: isolate blocking calls in bounded executors, apply explic
 timeouts, and add per-provider concurrency limits. The Mini App already limits
 manual checks to one active check per site in each process.
 
+### 8. Per-process locks and caches — low
+
+Manual-check locks live in process memory, and the Mini App cache lives in the
+current Telegram web view's `sessionStorage`. This is appropriate for the current
+single application process, but it does not coordinate duplicate manual checks
+across multiple replicas. The cache is never treated as authoritative and is
+replaced after every successful bootstrap request.
+
+Recommended follow-up: if the service is scaled horizontally, move manual-check
+deduplication to PostgreSQL or a distributed lock with a short lease. Keep the
+frontend cache session-scoped and avoid storing Telegram authorization data in
+persistent browser storage.
+
 ## Safe Rollout
 
 1. Back up PostgreSQL with `pg_dump` and retain the existing image tag.
 2. Add the new environment variables while keeping the existing database and
    `pgdata/` volume unchanged.
-3. Deploy the rebuilt container and verify `/admin/`, `/app/`, bot polling, and the
-   agent health endpoint.
-4. Configure an HTTPS reverse proxy for both `/app/` and `/api/webapp/`, then set
-   `WEB_APP_URL` to the public `/app/` URL.
-5. Test with one Telegram account: open the menu button, read existing sites, add a
-   temporary site, pause/resume it, run a manual check, and delete it.
+3. Deploy only the rebuilt application container and verify `/admin/`, `/app/`,
+   bot polling, and the agent health endpoint. Keep the database container and
+   `pgdata/` directory in place.
+4. Configure an HTTPS reverse proxy to the shared HTTP listener on port `11003`
+   and the WebSocket listener on the fixed port `11001`, then set `WEB_APP_URL`
+   to the public `/app/` URL.
+5. Test with one Telegram account: open the menu button, confirm that existing
+   sites load and problematic resources sort first, use the metric filters, add a
+   temporary site, close and reopen the dialog, pause/resume it, run a manual
+   check, and delete it.
 6. Monitor bot, PostgreSQL, and reverse-proxy logs before rolling the image to all
    hosts.
 
