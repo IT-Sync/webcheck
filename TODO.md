@@ -24,8 +24,8 @@ should not become a chronological changelog.
   operator login path for one release.
 - Add disposable PostgreSQL and aiohttp integration tests covering Mini App
   ownership checks, startup against old and current schemas, scheduler behavior,
-  notification deduplication, retention boundaries and rollback, aggregation,
-  and WebSocket-agent timeouts.
+  notification deduplication, feedback persistence and reply delivery, retention
+  boundaries and rollback, aggregation, and WebSocket-agent timeouts.
 - Continue separating large Telegram, scheduler, admin, and database modules
   behind existing compatibility imports.
 - Apply explicit timeouts and bounded concurrency to remaining synchronous or

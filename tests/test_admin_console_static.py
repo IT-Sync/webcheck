@@ -25,6 +25,15 @@ class AdminConsoleStaticTest(unittest.TestCase):
         self.assertIn('/admin/users/{site[\'user_id\']}', self.source)
         self.assertIn('/admin/messages?user_id={site[\'user_id\']}', self.source)
 
+    def test_feedback_inbox_and_reply_routes_are_registered(self):
+        self.assertIn('(\"feedback\", \"/admin/feedback\", \"Обратная связь\")', self.source)
+        self.assertIn('app.router.add_get(\"/admin/feedback\", feedback)', self.source)
+        self.assertIn('/admin/feedback/{conversation_id:\\\\d+}/reply', self.source)
+
+    def test_feedback_text_is_escaped_before_rendering(self):
+        self.assertIn("<p>{esc(item['message_text'])}</p>", self.source)
+        self.assertIn('Ответить от имени бота', self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

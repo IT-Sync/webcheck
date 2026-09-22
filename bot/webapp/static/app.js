@@ -41,6 +41,7 @@
     historyRegions: document.querySelector("#history-regions"),
     historyEvents: document.querySelector("#history-events"),
     closeHistory: document.querySelector("#close-history"),
+    feedback: document.querySelector("#open-feedback"),
     metrics: [...document.querySelectorAll(".metric[data-filter]")],
   };
 
@@ -269,6 +270,23 @@
     });
   }
 
+  async function openFeedback() {
+    hideNotice();
+    elements.feedback.disabled = true;
+    const originalText = elements.feedback.innerHTML;
+    elements.feedback.textContent = "Открываем чат…";
+    try {
+      await api("/api/webapp/feedback/start", { method: "POST", body: "{}" });
+      telegram?.HapticFeedback?.notificationOccurred("success");
+      window.setTimeout(() => telegram?.close(), 180);
+    } catch (error) {
+      showNotice(error.message);
+      elements.feedback.disabled = false;
+      elements.feedback.innerHTML = originalText;
+      telegram?.HapticFeedback?.notificationOccurred("error");
+    }
+  }
+
   async function runAction(site, action, container) {
     hideNotice();
     const buttons = [...container.querySelectorAll("button")];
@@ -471,6 +489,7 @@
 
   document.querySelector("#current-date").textContent = new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "short" }).format(new Date()).toUpperCase();
   document.querySelector("#open-add").addEventListener("click", openAdd);
+  elements.feedback.addEventListener("click", openFeedback);
   document.querySelector("#empty-add").addEventListener("click", openAdd);
   document.querySelector("#reset-filter").addEventListener("click", () => setFilter("all"));
   elements.metrics.forEach((metric) => {

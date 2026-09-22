@@ -83,6 +83,26 @@ c.execute('''CREATE TABLE IF NOT EXISTS agent_check_hourly (
     PRIMARY KEY (bucket_start, url, agent_id)
 )''')
 
+c.execute('''CREATE TABLE IF NOT EXISTS feedback_conversations (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT UNIQUE NOT NULL,
+    username TEXT,
+    waiting_for_user BOOLEAN NOT NULL DEFAULT FALSE,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_message_at TIMESTAMP
+)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS feedback_messages (
+    id BIGSERIAL PRIMARY KEY,
+    conversation_id INTEGER NOT NULL REFERENCES feedback_conversations(id) ON DELETE CASCADE,
+    sender TEXT NOT NULL,
+    message_text TEXT NOT NULL,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+)''')
+
 conn.commit()
 
 # Методы
@@ -208,8 +228,236 @@ def delete_user_data(user_id):
     logs_deleted = c.rowcount
     c.execute("DELETE FROM bot_messages WHERE user_id = %s", (user_id,))
     messages_deleted = c.rowcount
+    c.execute("DELETE FROM feedback_conversations WHERE user_id = %s", (user_id,))
     conn.commit()
     return sites_deleted, logs_deleted, messages_deleted
+
+
+def start_feedback_waiting(user_id, username=None):
+    try:
+        c.execute(
+            """
+            INSERT INTO feedback_conversations (
+                user_id, username, waiting_for_user, status, updated_at
+            )
+            VALUES (%s, %s, TRUE, 'open', %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                username = COALESCE(EXCLUDED.username, feedback_conversations.username),
+                waiting_for_user = TRUE,
+                status = 'open',
+                updated_at = EXCLUDED.updated_at
+            RETURNING id
+            """,
+            (user_id, username, datetime.utcnow()),
+        )
+        conversation_id = c.fetchone()[0]
+        conn.commit()
+        return conversation_id
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def cancel_feedback_waiting(user_id):
+    try:
+        c.execute(
+            """
+            UPDATE feedback_conversations
+            SET waiting_for_user = FALSE, updated_at = %s
+            WHERE user_id = %s AND waiting_for_user = TRUE
+            """,
+            (datetime.utcnow(), user_id),
+        )
+        updated = c.rowcount > 0
+        conn.commit()
+        return updated
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def is_feedback_waiting(user_id):
+    c.execute(
+        "SELECT waiting_for_user FROM feedback_conversations WHERE user_id = %s",
+        (user_id,),
+    )
+    row = c.fetchone()
+    return bool(row and row[0])
+
+
+def add_user_feedback_message(user_id, username, message_text):
+    now = datetime.utcnow()
+    try:
+        c.execute(
+            """
+            UPDATE feedback_conversations
+            SET username = COALESCE(%s, username),
+                waiting_for_user = FALSE,
+                status = 'open',
+                updated_at = %s,
+                last_message_at = %s
+            WHERE user_id = %s AND waiting_for_user = TRUE
+            RETURNING id
+            """,
+            (username, now, now, user_id),
+        )
+        row = c.fetchone()
+        if not row:
+            conn.rollback()
+            return None
+        conversation_id = row[0]
+        c.execute(
+            """
+            INSERT INTO feedback_messages (
+                conversation_id, sender, message_text, is_read, created_at
+            )
+            VALUES (%s, 'user', %s, FALSE, %s)
+            RETURNING id
+            """,
+            (conversation_id, message_text, now),
+        )
+        message_id = c.fetchone()[0]
+        conn.commit()
+        return {"conversation_id": conversation_id, "message_id": message_id}
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def get_feedback_conversations():
+    c.execute(
+        """
+        SELECT conversation.id, conversation.user_id, conversation.username,
+               conversation.status, conversation.waiting_for_user,
+               conversation.created_at, conversation.updated_at,
+               conversation.last_message_at,
+               COALESCE(messages.unread_count, 0),
+               latest.sender, latest.message_text, latest.created_at
+        FROM feedback_conversations AS conversation
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*) FILTER (
+                WHERE sender = 'user' AND is_read = FALSE
+            ) AS unread_count
+            FROM feedback_messages
+            WHERE conversation_id = conversation.id
+        ) AS messages ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT sender, message_text, created_at
+            FROM feedback_messages
+            WHERE conversation_id = conversation.id
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        ) AS latest ON TRUE
+        WHERE conversation.last_message_at IS NOT NULL
+        ORDER BY COALESCE(messages.unread_count, 0) DESC,
+                 conversation.last_message_at DESC NULLS LAST
+        """
+    )
+    return [
+        {
+            "id": row[0],
+            "user_id": row[1],
+            "username": row[2],
+            "status": row[3],
+            "waiting_for_user": row[4],
+            "created_at": row[5],
+            "updated_at": row[6],
+            "last_message_at": row[7],
+            "unread_count": row[8],
+            "last_sender": row[9],
+            "last_message": row[10],
+            "last_message_created_at": row[11],
+        }
+        for row in c.fetchall()
+    ]
+
+
+def get_feedback_conversation(conversation_id):
+    c.execute(
+        """
+        SELECT id, user_id, username, status, waiting_for_user,
+               created_at, updated_at, last_message_at
+        FROM feedback_conversations
+        WHERE id = %s
+        """,
+        (conversation_id,),
+    )
+    row = c.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "username": row[2],
+        "status": row[3],
+        "waiting_for_user": row[4],
+        "created_at": row[5],
+        "updated_at": row[6],
+        "last_message_at": row[7],
+    }
+
+
+def get_feedback_messages(conversation_id):
+    c.execute(
+        """
+        SELECT id, sender, message_text, is_read, created_at
+        FROM feedback_messages
+        WHERE conversation_id = %s
+        ORDER BY created_at, id
+        """,
+        (conversation_id,),
+    )
+    return [
+        {
+            "id": row[0],
+            "sender": row[1],
+            "message_text": row[2],
+            "is_read": row[3],
+            "created_at": row[4],
+        }
+        for row in c.fetchall()
+    ]
+
+
+def mark_feedback_read(conversation_id):
+    c.execute(
+        """
+        UPDATE feedback_messages
+        SET is_read = TRUE
+        WHERE conversation_id = %s AND sender = 'user' AND is_read = FALSE
+        """,
+        (conversation_id,),
+    )
+    conn.commit()
+
+
+def add_admin_feedback_message(conversation_id, message_text):
+    now = datetime.utcnow()
+    try:
+        c.execute(
+            """
+            INSERT INTO feedback_messages (
+                conversation_id, sender, message_text, is_read, created_at
+            )
+            VALUES (%s, 'admin', %s, TRUE, %s)
+            RETURNING id
+            """,
+            (conversation_id, message_text, now),
+        )
+        message_id = c.fetchone()[0]
+        c.execute(
+            """
+            UPDATE feedback_conversations
+            SET status = 'answered', updated_at = %s, last_message_at = %s
+            WHERE id = %s
+            """,
+            (now, now, conversation_id),
+        )
+        conn.commit()
+        return message_id
+    except Exception:
+        conn.rollback()
+        raise
 
 def get_all_sites(full=False):
     if full:
@@ -1125,5 +1373,7 @@ def migrate_add_notification_flags():
     c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_hourly_url_bucket ON agent_check_hourly(url, bucket_start DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_events_url_created_at ON events(url, created_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sites_user_group ON sites(user_id, site_group)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_feedback_conversations_last_message ON feedback_conversations(last_message_at DESC)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_feedback_messages_conversation_created ON feedback_messages(conversation_id, created_at)")
 
     conn.commit()

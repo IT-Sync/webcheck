@@ -25,7 +25,8 @@ remain compatible.
 - Bounded DNS validation when a site is added, including rejection of private,
   loopback, link-local, and other non-public targets.
 - Administrative console with a searchable all-site registry, direct owner
-  navigation, and user, event, message, and agent management.
+  navigation, a feedback inbox with bot replies, and user, event, message, and
+  agent management.
 - Authenticated outbound WebSocket agents for checks from remote locations.
 - CSV exports for logs, sites, and subdomain discovery results.
 
@@ -237,6 +238,13 @@ the request path. DNS work has a configurable timeout, and blocking DNS and TLS
 operations run outside the asyncio event loop. The first complete result is
 produced by the scheduler or by **Check now**.
 
+The **Feedback** button starts a persisted feedback session, sends instructions
+to the user's bot chat, and closes the Mini App. The next non-command text
+message is stored in the conversation and forwarded as a notification to
+`BOT_OWNER_ID`. Operators can read the complete thread under
+`/admin/feedback` and send a reply that is delivered by the bot. Users can also
+start the flow with `/feedback` or cancel it with `/cancel_feedback`.
+
 ## Remote Agents
 
 The central WebSocket listener uses port `11001`. Agents initiate outbound
@@ -354,7 +362,9 @@ After deployment, fully close and reopen the Telegram Mini App, then verify:
    backdrop tap where supported.
 4. Adding a temporary public domain completes within the configured DNS timeout.
 5. Pause, resume, manual check, and delete affect only the current user's site.
-6. Bot polling, scheduled monitoring, admin console, and remote agents continue
+6. Feedback closes the Mini App, captures the next text message in the bot,
+   appears under `/admin/feedback`, and delivers an administrator reply.
+7. Bot polling, scheduled monitoring, admin console, and remote agents continue
    to operate.
 
 ## Local Development and Tests

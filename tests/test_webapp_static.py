@@ -19,8 +19,8 @@ class WebAppStaticMarkupTest(unittest.TestCase):
     def test_frontend_assets_have_cache_busting_version(self):
         source = INDEX.read_text(encoding="utf-8")
 
-        self.assertIn("/app/static/app.css?v=7", source)
-        self.assertIn("/app/static/app.js?v=7", source)
+        self.assertIn("/app/static/app.css?v=8", source)
+        self.assertIn("/app/static/app.js?v=8", source)
 
     def test_status_metrics_are_filter_controls(self):
         source = INDEX.read_text(encoding="utf-8")
@@ -37,6 +37,14 @@ class WebAppStaticMarkupTest(unittest.TestCase):
         self.assertIn('id="history-dialog"', markup)
         self.assertIn('data-action="history"', markup)
         self.assertIn('data-action="group"', markup)
+
+    def test_feedback_returns_the_user_to_the_bot(self):
+        markup = INDEX.read_text(encoding="utf-8")
+        script = SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn('id="open-feedback"', markup)
+        self.assertIn('/api/webapp/feedback/start', script)
+        self.assertIn('telegram?.close()', script)
 
     def test_direct_access_uses_a_separate_placeholder(self):
         markup = INDEX.read_text(encoding="utf-8")

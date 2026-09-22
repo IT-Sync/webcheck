@@ -21,9 +21,14 @@ from bot.infra.db import (
     get_admin_user,
     get_admin_users,
     get_event_logs,
+    get_feedback_conversation,
+    get_feedback_conversations,
+    get_feedback_messages,
     get_site_by_id,
     get_user_logs,
     log_user_action,
+    add_admin_feedback_message,
+    mark_feedback_read,
     set_site_paused_by_id,
 )
 
@@ -61,12 +66,27 @@ def admin_site_status(site: dict) -> tuple[str, str]:
     return "pending", "Ожидает"
 
 
+def feedback_badge(item: dict) -> str:
+    if item["unread_count"]:
+        return f'<span class="unread-badge">Новых: {item["unread_count"]}</span>'
+    if item["waiting_for_user"]:
+        return '<span class="status-warning">Ожидается сообщение</span>'
+    if item["status"] == "answered":
+        return '<span class="status-ok">Отвечено</span>'
+    return '<span class="status-warning">Ожидает ответа</span>'
+
+
 def redirect_messages(result: str) -> web.HTTPFound:
     return web.HTTPFound("/admin/messages?" + urlencode({"result": result}))
 
 
 def redirect_agents(result: str) -> web.HTTPFound:
     return web.HTTPFound("/admin/agents?" + urlencode({"result": result}))
+
+
+def redirect_feedback(conversation_id: int, result: str) -> web.HTTPFound:
+    path = f"/admin/feedback/{conversation_id}"
+    return web.HTTPFound(path + "?" + urlencode({"result": result}))
 
 
 def bar_chart(rows, value_key: str, label: str, empty_text: str = "Данных пока нет") -> str:
@@ -106,6 +126,7 @@ def page(title: str, body: str, active: str = "") -> web.Response:
     nav = [
         ("dashboard", "/admin/", "Обзор"),
         ("sites", "/admin/sites", "Сайты"),
+        ("feedback", "/admin/feedback", "Обратная связь"),
         ("users", "/admin/users", "Пользователи"),
         ("logs", "/admin/logs", "Логи"),
         ("events", "/admin/events", "События"),
@@ -278,6 +299,23 @@ def page(title: str, body: str, active: str = "") -> web.Response:
     .site-address {{ color: var(--text); font: 12px/1.45 "Courier New", monospace; overflow-wrap: anywhere; }}
     .group-chip {{ display: inline-block; padding: 4px 7px; border: 1px solid rgba(74, 199, 184, .28); border-radius: 999px; color: #8fe0d7; font: 700 9px/1 "Courier New", monospace; }}
     .registry-empty {{ padding: 28px; border: 1px dashed var(--line); border-radius: 13px; color: var(--muted); text-align: center; }}
+    .feedback-list {{ display: grid; gap: 10px; }}
+    .feedback-item {{ display: grid; grid-template-columns: minmax(180px, .7fr) minmax(260px, 1.6fr) auto; gap: 18px; align-items: center; padding: 16px 18px; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(120deg, rgba(18, 35, 31, .96), rgba(10, 22, 19, .96)); color: var(--text); text-decoration: none; transition: border-color 160ms ease, transform 160ms ease; }}
+    .feedback-item:hover {{ border-color: rgba(184, 243, 74, .36); transform: translateY(-1px); }}
+    .feedback-item.unread {{ box-shadow: inset 3px 0 var(--accent); }}
+    .feedback-person {{ display: grid; gap: 4px; }}
+    .feedback-person strong {{ color: var(--text); }}
+    .feedback-person small, .feedback-preview small {{ color: var(--muted); }}
+    .feedback-preview {{ min-width: 0; }}
+    .feedback-preview p {{ overflow: hidden; margin: 4px 0 0; color: #b8c9c0; text-overflow: ellipsis; white-space: nowrap; }}
+    .feedback-meta {{ display: grid; justify-items: end; gap: 7px; white-space: nowrap; }}
+    .unread-badge {{ padding: 5px 8px; border-radius: 999px; background: var(--accent); color: #13200c; font: 800 9px/1 "Courier New", monospace; }}
+    .thread {{ display: grid; gap: 10px; margin: 18px 0; }}
+    .thread-message {{ width: min(78%, 760px); padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px 14px 14px 4px; background: var(--panel-raised); }}
+    .thread-message.admin {{ justify-self: end; border-color: rgba(184, 243, 74, .25); border-radius: 14px 14px 4px 14px; background: rgba(184, 243, 74, .07); }}
+    .thread-message p {{ margin: 7px 0 0; color: #d8e4dd; white-space: pre-wrap; overflow-wrap: anywhere; }}
+    .thread-message header {{ position: static; padding: 0; border: 0; background: transparent; backdrop-filter: none; color: var(--muted); font: 700 9px/1 "Courier New", monospace; letter-spacing: .07em; text-transform: uppercase; }}
+    .reply-panel {{ margin-top: 18px; }}
     @media (max-width: 720px) {{
       header, nav {{ padding-left: 14px; padding-right: 14px; }}
       main {{ padding: 24px 12px 50px; }}
@@ -286,6 +324,9 @@ def page(title: str, body: str, active: str = "") -> web.Response:
       .hide-sm {{ display: none; }}
       .registry-tools {{ grid-template-columns: 1fr; }}
       .registry-count {{ text-align: left; }}
+      .feedback-item {{ grid-template-columns: 1fr; gap: 9px; }}
+      .feedback-meta {{ justify-items: start; }}
+      .thread-message {{ width: 92%; }}
     }}
   </style>
 </head>
@@ -308,7 +349,7 @@ def page(title: str, body: str, active: str = "") -> web.Response:
         filterSiteRegistry();
         return;
       }}
-      document.querySelectorAll('tbody tr').forEach((row) => {{
+      document.querySelectorAll('tbody tr, .feedback-item').forEach((row) => {{
         row.hidden = query && !row.textContent.toLocaleLowerCase('ru').includes(query);
       }});
     }});
@@ -559,6 +600,115 @@ async def sites(request: web.Request) -> web.Response:
 </div>
 <div class="registry-empty" id="site-registry-empty" hidden>По этому запросу ресурсы не найдены.</div>"""
     return page("Все сайты", body, "sites")
+
+
+@require_auth
+async def feedback(request: web.Request) -> web.Response:
+    conversations = get_feedback_conversations()
+    conversation_rows = "".join(
+        f"""<a class="feedback-item {'unread' if item['unread_count'] else ''}" href="/admin/feedback/{item['id']}">
+  <span class="feedback-person">
+    <strong>{esc('@' + item['username'] if item['username'] else 'без username')}</strong>
+    <small>User ID: {item['user_id']} · обращение #{item['id']}</small>
+  </span>
+  <span class="feedback-preview">
+    <small>{'Пользователь' if item['last_sender'] == 'user' else 'Администратор'}</small>
+    <p>{esc(item['last_message'] or 'Сообщений пока нет')}</p>
+  </span>
+  <span class="feedback-meta">
+    <small>{fmt_dt(item['last_message_created_at'])}</small>
+    {feedback_badge(item)}
+  </span>
+</a>"""
+        for item in conversations
+    ) or '<div class="registry-empty">Обращений пока нет.</div>'
+    unread_total = sum(item["unread_count"] for item in conversations)
+    body = f"""
+<div class="registry-head">
+  <div>
+    <h2>Обратная связь</h2>
+    <div class="subline">Диалоги пользователей с ответами от имени Telegram-бота</div>
+  </div>
+  <div class="registry-total">{unread_total}<small>непрочитанных</small></div>
+</div>
+<div class="feedback-list">{conversation_rows}</div>"""
+    return page("Обратная связь", body, "feedback")
+
+
+@require_auth
+async def feedback_detail(request: web.Request) -> web.Response:
+    conversation_id = int(request.match_info["conversation_id"])
+    conversation = get_feedback_conversation(conversation_id)
+    if not conversation:
+        raise web.HTTPNotFound(text="Обращение не найдено")
+    messages = get_feedback_messages(conversation_id)
+    mark_feedback_read(conversation_id)
+    username = f"@{conversation['username']}" if conversation["username"] else "без username"
+    message_rows = "".join(
+        f"""<article class="thread-message {'admin' if item['sender'] == 'admin' else 'user'}">
+  <header><span>{'Администратор' if item['sender'] == 'admin' else esc(username)}</span><time>{fmt_dt(item['created_at'])}</time></header>
+  <p>{esc(item['message_text'])}</p>
+</article>"""
+        for item in messages
+    ) or '<div class="registry-empty">Сообщений пока нет.</div>'
+    flash = esc(request.query.get("result", ""))
+    flash_html = f'<div class="flash">{flash}</div>' if flash else ""
+    body = f"""
+<div class="user-head">
+  <div>
+    <h2>{esc(username)}</h2>
+    <div class="subline">Обращение #{conversation_id} · User ID: <code>{conversation['user_id']}</code></div>
+  </div>
+  <div class="actions">
+    <a class="button secondary" href="/admin/feedback">← Все обращения</a>
+    <a class="button secondary" href="/admin/users/{conversation['user_id']}">Пользователь</a>
+  </div>
+</div>
+{flash_html}
+<section class="thread">{message_rows}</section>
+<section class="panel reply-panel">
+  <h2>Ответить от имени бота</h2>
+  <form method="post" action="/admin/feedback/{conversation_id}/reply">
+    <label>Сообщение<textarea name="text" maxlength="3500" required placeholder="Ответ будет отправлен пользователю в Telegram"></textarea></label>
+    <button type="submit">Отправить ответ</button>
+  </form>
+</section>"""
+    return page(f"Обращение #{conversation_id}", body, "feedback")
+
+
+@require_auth
+async def reply_feedback(request: web.Request) -> web.Response:
+    conversation_id = int(request.match_info["conversation_id"])
+    conversation = get_feedback_conversation(conversation_id)
+    if not conversation:
+        raise web.HTTPNotFound(text="Обращение не найдено")
+    data = await request.post()
+    text = str(data.get("text") or "").strip()
+    if not text:
+        raise redirect_feedback(conversation_id, "Ответ не может быть пустым")
+    if len(text) > 3500:
+        raise redirect_feedback(conversation_id, "Ответ не должен превышать 3500 символов")
+    try:
+        await request.app["bot"].send_message(
+            conversation["user_id"],
+            f"💬 Ответ администратора Webcheck:\n\n{text}\n\n"
+            "Чтобы продолжить диалог, используйте /feedback или кнопку "
+            "«Обратная связь» в приложении.",
+        )
+    except TelegramForbiddenError:
+        raise redirect_feedback(conversation_id, "Пользователь заблокировал бота")
+    except Exception as exc:
+        raise redirect_feedback(
+            conversation_id,
+            f"Не удалось отправить ответ: {type(exc).__name__}",
+        )
+    add_admin_feedback_message(conversation_id, text)
+    log_user_action(
+        BOT_OWNER_ID,
+        f"web: replied to feedback conversation {conversation_id}",
+        "web-admin",
+    )
+    raise redirect_feedback(conversation_id, "Ответ отправлен пользователю")
 
 
 @require_auth
@@ -885,6 +1035,9 @@ def create_app(bot) -> web.Application:
     app.router.add_get("/admin", admin_root)
     app.router.add_get("/admin/", dashboard)
     app.router.add_get("/admin/sites", sites)
+    app.router.add_get("/admin/feedback", feedback)
+    app.router.add_get("/admin/feedback/{conversation_id:\\d+}", feedback_detail)
+    app.router.add_post("/admin/feedback/{conversation_id:\\d+}/reply", reply_feedback)
     app.router.add_get("/admin/users", users)
     app.router.add_get("/admin/users/{user_id:\\d+}", user_detail)
     app.router.add_post("/admin/users/{user_id:\\d+}/delete", delete_user)

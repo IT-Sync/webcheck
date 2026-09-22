@@ -93,6 +93,13 @@ worker threads so it cannot block the aiohttp/aiogram event loop.
 Manual checks are serialized per site within the process. They run the central
 check and collect online-agent results before updating the stored status.
 
+Feedback starts through the authenticated Mini App API or `/feedback`. A
+persisted `feedback_conversations.waiting_for_user` flag routes the next
+non-command text message into `feedback_messages` instead of the site-input
+handler. The bot notifies `BOT_OWNER_ID`; authenticated operators read the
+thread and reply through the admin console, which sends the response through the
+same bot before recording it as an administrator message.
+
 ## Web Routes
 
 | Listener | Route | Authentication | Purpose |
@@ -102,8 +109,10 @@ check and collect online-agent results before updating the stored status.
 | `11003` | `/api/webapp/sites` | Telegram `initData` | Add a site |
 | `11003` | `/api/webapp/sites/{id}/*` | Telegram `initData` + ownership | Check or mutate a site |
 | `11003` | `/api/webapp/sites/{id}/history` | Telegram `initData` + ownership | Resource history and aggregates |
+| `11003` | `/api/webapp/feedback/start` | Telegram `initData` | Start a persisted bot feedback session |
 | `11003` | `/admin/*` | Admin token cookie/query | Operator console |
 | `11003` | `/admin/sites` | Admin token cookie/query | Searchable cross-user resource registry |
+| `11003` | `/admin/feedback/*` | Admin token cookie/query | Feedback inbox, threads, and replies |
 | `11001` | `/health` | None | Agent server health probe |
 | `11001` | `/ws/agents` | Token in `agent.hello` | Remote-agent WebSocket |
 
@@ -169,6 +178,11 @@ The Mini App reuses the existing `sites.user_id` Telegram identity and does not
 add a second account model. Startup schema operations are additive and
 idempotent. The PostgreSQL data directory is bind-mounted at `./pgdata`, so an
 application image rebuild does not replace customer data.
+
+`feedback_conversations` stores one durable thread per Telegram user, including
+whether the bot is waiting for the next message. `feedback_messages` stores the
+user/admin transcript and unread state. Deleting all data for a user cascades to
+the feedback transcript; ordinary site deletion does not affect feedback.
 
 `agent_check_results` contains short-lived raw results. The hourly maintenance
 job selects expired rows in bounded batches, aggregates each batch into

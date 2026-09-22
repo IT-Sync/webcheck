@@ -17,6 +17,8 @@ from bot.infra.db import (
     get_site_history_for_user,
     get_sites_with_pause,
     log_user_action,
+    start_feedback_waiting,
+    cancel_feedback_waiting,
     set_site_paused_by_id,
     set_site_group_by_id,
     update_site_status_by_id,
@@ -154,6 +156,35 @@ async def bootstrap(request: web.Request) -> web.Response:
             "limits": {"sites": WEB_APP_MAX_SITES_PER_USER},
         }
     )
+
+
+@require_telegram_user
+async def start_feedback(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    try:
+        conversation_id = start_feedback_waiting(user.id, user.username)
+    except Exception as exc:
+        return _json_error(
+            f"Не удалось открыть обратную связь: {type(exc).__name__}",
+            status=503,
+            code="feedback_unavailable",
+        )
+    try:
+        await request.app["bot"].send_message(
+            user.id,
+            "💬 Напишите одним сообщением ваш вопрос, пожелание или описание проблемы.\n\n"
+            "Следующее текстовое сообщение будет отправлено администратору. "
+            "Чтобы отменить отправку, используйте /cancel_feedback.",
+        )
+    except Exception as exc:
+        cancel_feedback_waiting(user.id)
+        return _json_error(
+            f"Не удалось открыть обратную связь: {type(exc).__name__}",
+            status=502,
+            code="feedback_start_failed",
+        )
+    log_user_action(user.id, "Mini App: started feedback", user.username)
+    return web.json_response({"ok": True, "conversation_id": conversation_id})
 
 
 @require_telegram_user
@@ -326,6 +357,7 @@ def setup_webapp_routes(app: web.Application) -> None:
     app.router.add_get("/app/", app_index)
     app.router.add_static("/app/static/", STATIC_DIR, show_index=False)
     app.router.add_get("/api/webapp/bootstrap", bootstrap)
+    app.router.add_post("/api/webapp/feedback/start", start_feedback)
     app.router.add_post("/api/webapp/sites", create_site)
     app.router.add_post("/api/webapp/sites/{site_id:\\d+}/check", check_site)
     app.router.add_post("/api/webapp/sites/{site_id:\\d+}/pause", pause_site)

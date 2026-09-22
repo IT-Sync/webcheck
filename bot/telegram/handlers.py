@@ -1,4 +1,5 @@
 from aiogram import Router, types, F
+from aiogram.filters import BaseFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.infra.db import (
     add_site, get_sites, delete_site, get_all_sites, get_site_statuses,
@@ -11,7 +12,9 @@ from bot.infra.db import (
     update_site_status, update_site_status_by_id, delete_user_data,
     get_site_for_user, get_site_by_id, delete_site_by_id,
     admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
-    set_site_paused_until_by_id, get_site_pause_status
+    set_site_paused_until_by_id, get_site_pause_status,
+    add_user_feedback_message, cancel_feedback_waiting,
+    is_feedback_waiting, start_feedback_waiting
 )
 from bot.agent_server.checks import check_with_agents
 from bot.checks.monitor import get_geo_info
@@ -49,6 +52,17 @@ ADMIN_COMMANDS_TEXT = (
     "/weekly_all — еженедельный отчёт по всем ресурсам\n"
     "/remove_user <user_id> — удалить сайты и логи пользователя"
 )
+
+
+class FeedbackPendingFilter(BaseFilter):
+    async def __call__(self, message: types.Message) -> bool:
+        text = message.text or ""
+        return bool(
+            message.from_user
+            and text
+            and not text.startswith("/")
+            and is_feedback_waiting(message.from_user.id)
+        )
 
 def is_domain_resolvable(domain: str) -> bool:
     try:
@@ -140,6 +154,7 @@ async def cmd_start(message: types.Message):
         "/statusme — Сводный отчёт по вашим ресурсам\n"
         "/statusme <URL> — Статус одного сайта\n"
         "/weekly — То же, что /statusme\n"
+        "/feedback — Написать администратору\n"
         "/subdomains <домен> — Поиск поддоменов\n\n"
         "🔐 SSL и 🌐 домен также проверяются.\n"
         "_Поддомены не проходят проверку домена._\n\n"
@@ -163,6 +178,30 @@ async def cmd_app(message: types.Message):
         reply_markup=keyboard,
     )
 
+
+@router.message(F.text == "/feedback")
+async def cmd_feedback(message: types.Message):
+    try:
+        start_feedback_waiting(message.from_user.id, message.from_user.username)
+    except Exception as exc:
+        print(f"Failed to start feedback: {type(exc).__name__}: {exc}")
+        return await message.answer("Обратная связь временно недоступна. Попробуйте позже.")
+    log_user_action(message.from_user.id, "/feedback", message.from_user.username)
+    await message.answer(
+        "💬 Напишите одним сообщением ваш вопрос, пожелание или описание проблемы.\n\n"
+        "Следующее текстовое сообщение будет отправлено администратору. "
+        "Чтобы отменить отправку, используйте /cancel_feedback."
+    )
+
+
+@router.message(F.text == "/cancel_feedback")
+async def cmd_cancel_feedback(message: types.Message):
+    cancelled = cancel_feedback_waiting(message.from_user.id)
+    if cancelled:
+        await message.answer("Отправка сообщения администратору отменена.")
+    else:
+        await message.answer("Сейчас бот не ожидает сообщение для администратора.")
+
 @router.message(F.text == "/help")
 async def cmd_help(message: types.Message):
     log_user_action(message.from_user.id, "/help", message.from_user.username)
@@ -178,6 +217,7 @@ async def cmd_help(message: types.Message):
         "/statusme &lt;URL&gt; — Проверить статус конкретного сайта\n"
         "/weekly — То же, что /statusme\n"
         "/app — Открыть web-приложение\n"
+        "/feedback — Написать администратору\n"
         "/subdomains &lt;домен&gt; — Найти поддомены \n\n"
         "🔐 <b>Я проверяю:</b>\n"
         "— доступность сайта (HTTP)\n"
@@ -811,6 +851,56 @@ async def cmd_subdomains(message: types.Message):
     else:
         preview = "\n".join(f"• `{s}`" for s in subdomains)
         await message.answer(f"🔍 Найдено {len(subdomains)} поддоменов:\n{preview}", parse_mode="Markdown")
+
+
+@router.message(FeedbackPendingFilter(), F.text)
+async def receive_feedback(message: types.Message):
+    text = message.text.strip()
+    if not text:
+        return await message.answer("Сообщение пустое. Напишите текст обращения.")
+    if len(text) > 3500:
+        return await message.answer(
+            "Сообщение слишком длинное. Сократите его до 3500 символов и отправьте ещё раз."
+        )
+
+    try:
+        saved = add_user_feedback_message(
+            message.from_user.id,
+            message.from_user.username,
+            text,
+        )
+    except Exception as exc:
+        print(f"Failed to save feedback: {type(exc).__name__}: {exc}")
+        return await message.answer(
+            "Не удалось сохранить обращение. Попробуйте отправить сообщение ещё раз."
+        )
+    if not saved:
+        return await message.answer(
+            "Не удалось сохранить обращение. Снова выберите «Обратная связь» и повторите отправку."
+        )
+
+    log_user_action(
+        message.from_user.id,
+        f"Feedback: created conversation {saved['conversation_id']}",
+        message.from_user.username,
+    )
+    await message.answer(
+        "✅ Сообщение передано администратору. Ответ придёт в этот чат от имени бота."
+    )
+
+    if BOT_OWNER_ID:
+        username = f"@{message.from_user.username}" if message.from_user.username else "без username"
+        try:
+            await message.bot.send_message(
+                BOT_OWNER_ID,
+                f"💬 Новое обращение #{saved['conversation_id']}\n"
+                f"Пользователь: {username}\n"
+                f"User ID: {message.from_user.id}\n\n"
+                f"{text}\n\n"
+                "Ответить можно в разделе «Обратная связь» административной панели.",
+            )
+        except Exception as exc:
+            print(f"Failed to notify feedback owner: {type(exc).__name__}: {exc}")
 
 
 # Обработчик, не мешающий командам

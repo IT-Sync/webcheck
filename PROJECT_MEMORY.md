@@ -44,6 +44,12 @@ Current behavior:
 Static asset URLs are versioned, and the Mini App shell is served with no-cache
 headers to reduce stale Telegram web-view assets after deployment.
 
+The Mini App includes a feedback action that creates a persisted pending session,
+sends an instruction message to the user's Telegram chat, and closes the Mini
+App. The next non-command text message is stored and not interpreted as a site.
+The bot notifies `BOT_OWNER_ID`, while `/admin/feedback` provides an unread
+inbox, complete conversation history, and replies delivered from the bot.
+
 ## Data Retention
 
 The application includes an opt-in hourly maintenance job. It archives expired
@@ -103,7 +109,7 @@ and aggregation before history, groups, maintenance, and public status pages.
 
 ## Validation Baseline
 
-The current suite contains 38 passing `unittest` tests. Standard validation is:
+The current suite contains 44 passing `unittest` tests. Standard validation is:
 
 ```bash
 python -m unittest discover -s tests -v

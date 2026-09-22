@@ -108,6 +108,7 @@ code { font-family: "Courier New", monospace; }
 }
 
 .topbar { padding-bottom: 28px; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
 .brand { display: flex; gap: 10px; align-items: center; color: var(--paper); text-decoration: none; font: 700 18px/1 Georgia, serif; letter-spacing: -0.02em; }
 .brand-mark { display: flex; gap: 2px; align-items: end; width: 22px; height: 20px; padding: 3px; border: 1px solid var(--acid); border-radius: 50% 50% 46% 54%; transform: rotate(-8deg); }
 .brand-mark i { display: block; width: 4px; background: var(--acid); }
@@ -117,6 +118,9 @@ code { font-family: "Courier New", monospace; }
 
 .live-pill { padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font: 600 10px/1 "Courier New", monospace; letter-spacing: 0.12em; text-transform: uppercase; }
 .live-pill span { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--acid); box-shadow: 0 0 10px var(--acid); animation: pulse 2s infinite; }
+.feedback-button { padding: 7px 10px; border: 1px solid rgba(74, 199, 184, 0.28); border-radius: 999px; background: rgba(74, 199, 184, 0.07); color: #8fe0d7; cursor: pointer; font: 700 9px/1 "Courier New", monospace; letter-spacing: 0.07em; text-transform: uppercase; }
+.feedback-button span { margin-right: 4px; color: var(--acid); }
+.feedback-button:disabled { opacity: 0.55; cursor: wait; }
 
 .hero {
   position: relative;
@@ -273,6 +277,8 @@ dialog::backdrop { background: rgba(0, 7, 5, 0.78); backdrop-filter: blur(8px); 
 }
 
 @media (max-width: 480px) {
+  .live-pill { display: none; }
+  .feedback-button { padding: 8px 10px; }
   .gate-code { max-width: 120px; line-height: 1.4; text-align: right; }
   .gate-stage { min-height: 58vh; }
   .gate-copy h1 { font-size: clamp(43px, 14vw, 62px); }
