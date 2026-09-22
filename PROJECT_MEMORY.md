@@ -53,7 +53,9 @@ is seven days for raw agent results, 90 days for user and bot logs, and 365 days
 for events. The interval is configurable and completion logs include deleted
 row counts and duration. `DB_MAINTENANCE_ENABLED` defaults to `0`; production
 must back up the database, deploy the additive schema, and then enable cleanup
-deliberately.
+deliberately. Maintenance verifies that the operator-created cleanup index is
+both ready and valid; failed concurrent builds can leave an invalid index that
+must be dropped and rebuilt concurrently.
 
 The administrative console uses the same dark control-room visual language as
 the Mini App and provides page-level table search.

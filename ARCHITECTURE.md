@@ -179,7 +179,9 @@ interval is configurable and current defaults keep seven days of raw agent
 results, 90 days of user and bot logs, and 365 days of events. Cleanup requires
 an operator-created concurrent index on raw result
 timestamps; the application deliberately avoids building that large index in a
-startup transaction.
+startup transaction. The guard checks PostgreSQL's `indisready` and `indisvalid`
+flags because an interrupted concurrent build may leave an unusable catalog
+entry with the expected index name.
 
 The primary architectural constraint is the process-wide synchronous psycopg2
 connection and cursor. Database calls can block the event loop and concurrent

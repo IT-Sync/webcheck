@@ -304,6 +304,25 @@ Maintenance refuses to run without `idx_agent_check_results_created_at`. The
 large index is deliberately not built during application startup because the
 existing production table may contain millions of rows.
 
+If a concurrent build is interrupted by a deadlock or another error, PostgreSQL
+can leave an index with the requested name but mark it invalid. Check and recover
+it before enabling maintenance:
+
+```bash
+docker compose exec -T db psql -U devuser -d devcheck -c \
+  "SELECT c.relname, i.indisready, i.indisvalid FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid WHERE c.relname = 'idx_agent_check_results_created_at';"
+
+docker compose exec -T db psql -U devuser -d devcheck -c \
+  "DROP INDEX CONCURRENTLY IF EXISTS idx_agent_check_results_created_at;"
+
+docker compose exec -T db psql -U devuser -d devcheck -c \
+  "CREATE INDEX CONCURRENTLY idx_agent_check_results_created_at ON agent_check_results(created_at);"
+```
+
+Run only one concurrent index build on `agent_check_results` at a time. The
+maintenance guard checks both `indisready` and `indisvalid`, so an incomplete
+index cannot accidentally enable cleanup.
+
 ## Safe In-place Update
 
 Back up PostgreSQL before a major release:

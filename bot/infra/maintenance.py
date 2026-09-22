@@ -98,11 +98,18 @@ def _archive_agent_batch(cursor, cutoff, batch_size):
 
 def _require_cleanup_index(cursor):
     cursor.execute(
-        "SELECT to_regclass('public.idx_agent_check_results_created_at')"
+        """
+        SELECT COALESCE((
+            SELECT index_info.indisvalid AND index_info.indisready
+            FROM pg_index AS index_info
+            WHERE index_info.indexrelid =
+                  to_regclass('public.idx_agent_check_results_created_at')
+        ), FALSE)
+        """
     )
-    if cursor.fetchone()[0] is None:
+    if not cursor.fetchone()[0]:
         raise RuntimeError(
-            "Create idx_agent_check_results_created_at concurrently before enabling maintenance"
+            "Create a valid idx_agent_check_results_created_at concurrently before enabling maintenance"
         )
 
 

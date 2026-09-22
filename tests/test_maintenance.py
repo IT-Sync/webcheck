@@ -1,7 +1,11 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from bot.infra.maintenance import MaintenanceSettings, run_database_maintenance
+from bot.infra.maintenance import (
+    MaintenanceSettings,
+    _require_cleanup_index,
+    run_database_maintenance,
+)
 
 
 class MaintenanceSettingsTest(unittest.TestCase):
@@ -34,6 +38,19 @@ class MaintenanceSettingsTest(unittest.TestCase):
 
         self.assertEqual(result, {"enabled": False, "deleted": {}})
         connect.assert_not_called()
+
+    def test_cleanup_rejects_an_invalid_index(self):
+        cursor = Mock()
+        cursor.fetchone.return_value = (False,)
+
+        with self.assertRaisesRegex(RuntimeError, "valid idx_agent"):
+            _require_cleanup_index(cursor)
+
+    def test_cleanup_accepts_a_valid_ready_index(self):
+        cursor = Mock()
+        cursor.fetchone.return_value = (True,)
+
+        _require_cleanup_index(cursor)
 
 
 if __name__ == "__main__":
