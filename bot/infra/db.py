@@ -88,6 +88,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS feedback_conversations (
     user_id BIGINT UNIQUE NOT NULL,
     username TEXT,
     waiting_for_user BOOLEAN NOT NULL DEFAULT FALSE,
+    active_media_group_id TEXT,
     status TEXT NOT NULL DEFAULT 'open',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -99,6 +100,14 @@ c.execute('''CREATE TABLE IF NOT EXISTS feedback_messages (
     conversation_id INTEGER NOT NULL REFERENCES feedback_conversations(id) ON DELETE CASCADE,
     sender TEXT NOT NULL,
     message_text TEXT NOT NULL,
+    telegram_message_id BIGINT,
+    media_type TEXT,
+    telegram_file_id TEXT,
+    telegram_file_unique_id TEXT,
+    file_name TEXT,
+    mime_type TEXT,
+    file_size BIGINT,
+    media_group_id TEXT,
     is_read BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 )''')
@@ -244,6 +253,7 @@ def start_feedback_waiting(user_id, username=None):
             ON CONFLICT (user_id) DO UPDATE SET
                 username = COALESCE(EXCLUDED.username, feedback_conversations.username),
                 waiting_for_user = TRUE,
+                active_media_group_id = NULL,
                 status = 'open',
                 updated_at = EXCLUDED.updated_at
             RETURNING id
@@ -263,7 +273,9 @@ def cancel_feedback_waiting(user_id):
         c.execute(
             """
             UPDATE feedback_conversations
-            SET waiting_for_user = FALSE, updated_at = %s
+            SET waiting_for_user = FALSE,
+                active_media_group_id = NULL,
+                updated_at = %s
             WHERE user_id = %s AND waiting_for_user = TRUE
             """,
             (datetime.utcnow(), user_id),
@@ -276,16 +288,35 @@ def cancel_feedback_waiting(user_id):
         raise
 
 
-def is_feedback_waiting(user_id):
+def is_feedback_waiting(user_id, media_group_id=None):
     c.execute(
-        "SELECT waiting_for_user FROM feedback_conversations WHERE user_id = %s",
-        (user_id,),
+        """
+        SELECT waiting_for_user OR (
+            %s IS NOT NULL AND active_media_group_id = %s
+        )
+        FROM feedback_conversations
+        WHERE user_id = %s
+        """,
+        (media_group_id, media_group_id, user_id),
     )
     row = c.fetchone()
     return bool(row and row[0])
 
 
-def add_user_feedback_message(user_id, username, message_text):
+def add_user_feedback_message(
+    user_id,
+    username,
+    message_text,
+    *,
+    telegram_message_id=None,
+    media_type=None,
+    telegram_file_id=None,
+    telegram_file_unique_id=None,
+    file_name=None,
+    mime_type=None,
+    file_size=None,
+    media_group_id=None,
+):
     now = datetime.utcnow()
     try:
         c.execute(
@@ -295,11 +326,18 @@ def add_user_feedback_message(user_id, username, message_text):
                 waiting_for_user = FALSE,
                 status = 'open',
                 updated_at = %s,
-                last_message_at = %s
-            WHERE user_id = %s AND waiting_for_user = TRUE
+                last_message_at = %s,
+                active_media_group_id = %s
+            WHERE user_id = %s AND (
+                waiting_for_user = TRUE
+                OR (%s IS NOT NULL AND active_media_group_id = %s)
+            )
             RETURNING id
             """,
-            (username, now, now, user_id),
+            (
+                username, now, now, media_group_id, user_id,
+                media_group_id, media_group_id,
+            ),
         )
         row = c.fetchone()
         if not row:
@@ -309,12 +347,22 @@ def add_user_feedback_message(user_id, username, message_text):
         c.execute(
             """
             INSERT INTO feedback_messages (
-                conversation_id, sender, message_text, is_read, created_at
+                conversation_id, sender, message_text, telegram_message_id,
+                media_type, telegram_file_id, telegram_file_unique_id,
+                file_name, mime_type, file_size, media_group_id,
+                is_read, created_at
             )
-            VALUES (%s, 'user', %s, FALSE, %s)
+            VALUES (
+                %s, 'user', %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                FALSE, %s
+            )
             RETURNING id
             """,
-            (conversation_id, message_text, now),
+            (
+                conversation_id, message_text, telegram_message_id,
+                media_type, telegram_file_id, telegram_file_unique_id,
+                file_name, mime_type, file_size, media_group_id, now,
+            ),
         )
         message_id = c.fetchone()[0]
         conn.commit()
@@ -332,7 +380,8 @@ def get_feedback_conversations():
                conversation.created_at, conversation.updated_at,
                conversation.last_message_at,
                COALESCE(messages.unread_count, 0),
-               latest.sender, latest.message_text, latest.created_at
+               latest.sender, latest.message_text, latest.created_at,
+               latest.media_type, latest.file_name
         FROM feedback_conversations AS conversation
         LEFT JOIN LATERAL (
             SELECT COUNT(*) FILTER (
@@ -342,7 +391,7 @@ def get_feedback_conversations():
             WHERE conversation_id = conversation.id
         ) AS messages ON TRUE
         LEFT JOIN LATERAL (
-            SELECT sender, message_text, created_at
+            SELECT sender, message_text, created_at, media_type, file_name
             FROM feedback_messages
             WHERE conversation_id = conversation.id
             ORDER BY created_at DESC, id DESC
@@ -367,6 +416,8 @@ def get_feedback_conversations():
             "last_sender": row[9],
             "last_message": row[10],
             "last_message_created_at": row[11],
+            "last_media_type": row[12],
+            "last_file_name": row[13],
         }
         for row in c.fetchall()
     ]
@@ -400,7 +451,10 @@ def get_feedback_conversation(conversation_id):
 def get_feedback_messages(conversation_id):
     c.execute(
         """
-        SELECT id, sender, message_text, is_read, created_at
+        SELECT id, sender, message_text, is_read, created_at,
+               telegram_message_id, media_type, telegram_file_id,
+               telegram_file_unique_id, file_name, mime_type, file_size,
+               media_group_id
         FROM feedback_messages
         WHERE conversation_id = %s
         ORDER BY created_at, id
@@ -414,9 +468,50 @@ def get_feedback_messages(conversation_id):
             "message_text": row[2],
             "is_read": row[3],
             "created_at": row[4],
+            "telegram_message_id": row[5],
+            "media_type": row[6],
+            "telegram_file_id": row[7],
+            "telegram_file_unique_id": row[8],
+            "file_name": row[9],
+            "mime_type": row[10],
+            "file_size": row[11],
+            "media_group_id": row[12],
         }
         for row in c.fetchall()
     ]
+
+
+def get_feedback_message(message_id):
+    c.execute(
+        """
+        SELECT message.id, message.conversation_id, message.sender,
+               message.message_text, message.media_type,
+               message.telegram_file_id, message.file_name,
+               message.mime_type, message.file_size, message.created_at,
+               conversation.user_id
+        FROM feedback_messages AS message
+        JOIN feedback_conversations AS conversation
+          ON conversation.id = message.conversation_id
+        WHERE message.id = %s
+        """,
+        (message_id,),
+    )
+    row = c.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "conversation_id": row[1],
+        "sender": row[2],
+        "message_text": row[3],
+        "media_type": row[4],
+        "telegram_file_id": row[5],
+        "file_name": row[6],
+        "mime_type": row[7],
+        "file_size": row[8],
+        "created_at": row[9],
+        "user_id": row[10],
+    }
 
 
 def mark_feedback_read(conversation_id):
@@ -1373,6 +1468,15 @@ def migrate_add_notification_flags():
     c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_hourly_url_bucket ON agent_check_hourly(url, bucket_start DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_events_url_created_at ON events(url, created_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sites_user_group ON sites(user_id, site_group)")
+    c.execute("ALTER TABLE feedback_conversations ADD COLUMN IF NOT EXISTS active_media_group_id TEXT")
+    c.execute("ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS telegram_message_id BIGINT")
+    c.execute("ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS media_type TEXT")
+    c.execute("ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS telegram_file_id TEXT")
+    c.execute("ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS telegram_file_unique_id TEXT")
+    c.execute("ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS file_name TEXT")
+    c.execute("ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS mime_type TEXT")
+    c.execute("ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS file_size BIGINT")
+    c.execute("ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS media_group_id TEXT")
     c.execute("CREATE INDEX IF NOT EXISTS idx_feedback_conversations_last_message ON feedback_conversations(last_message_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_feedback_messages_conversation_created ON feedback_messages(conversation_id, created_at)")
 

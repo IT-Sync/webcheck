@@ -31,8 +31,14 @@ class AdminConsoleStaticTest(unittest.TestCase):
         self.assertIn('/admin/feedback/{conversation_id:\\\\d+}/reply', self.source)
 
     def test_feedback_text_is_escaped_before_rendering(self):
-        self.assertIn("<p>{esc(item['message_text'])}</p>", self.source)
+        self.assertIn('esc(item["message_text"])', self.source)
         self.assertIn('Ответить от имени бота', self.source)
+
+    def test_feedback_media_uses_an_authenticated_proxy(self):
+        self.assertIn("async def feedback_media", self.source)
+        self.assertIn('/admin/feedback/media/{message_id:\\\\d+}', self.source)
+        self.assertIn('X-Content-Type-Options', self.source)
+        self.assertIn('feedback_attachment_html(item)', self.source)
 
 
 if __name__ == "__main__":

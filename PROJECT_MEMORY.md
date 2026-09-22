@@ -46,9 +46,13 @@ headers to reduce stale Telegram web-view assets after deployment.
 
 The Mini App includes a feedback action that creates a persisted pending session,
 sends an instruction message to the user's Telegram chat, and closes the Mini
-App. The next non-command text message is stored and not interpreted as a site.
-The bot notifies `BOT_OWNER_ID`, while `/admin/feedback` provides an unread
-inbox, complete conversation history, and replies delivered from the bot.
+App. The next non-command message is stored rather than interpreted as a site
+and may contain text, a caption, photos, video,
+documents, audio, voice, video notes, or a Telegram media group. Attachments are
+stored as Telegram file identifiers rather than database blobs. The bot notifies
+`BOT_OWNER_ID`, while `/admin/feedback` provides an unread inbox, protected
+attachment viewing, complete conversation history, and replies delivered from
+the bot.
 
 ## Data Retention
 
@@ -109,7 +113,7 @@ and aggregation before history, groups, maintenance, and public status pages.
 
 ## Validation Baseline
 
-The current suite contains 44 passing `unittest` tests. Standard validation is:
+The current suite contains 47 passing `unittest` tests. Standard validation is:
 
 ```bash
 python -m unittest discover -s tests -v

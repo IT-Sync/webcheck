@@ -56,13 +56,49 @@ ADMIN_COMMANDS_TEXT = (
 
 class FeedbackPendingFilter(BaseFilter):
     async def __call__(self, message: types.Message) -> bool:
-        text = message.text or ""
+        text = message.text or message.caption or ""
+        attachment = feedback_attachment(message)
         return bool(
             message.from_user
-            and text
-            and not text.startswith("/")
-            and is_feedback_waiting(message.from_user.id)
+            and (text or attachment)
+            and not (message.text or "").startswith("/")
+            and is_feedback_waiting(
+                message.from_user.id,
+                media_group_id=message.media_group_id,
+            )
         )
+
+
+def feedback_attachment(message: types.Message):
+    if message.photo:
+        file = message.photo[-1]
+        return {
+            "media_type": "photo",
+            "telegram_file_id": file.file_id,
+            "telegram_file_unique_id": file.file_unique_id,
+            "file_name": "photo.jpg",
+            "mime_type": "image/jpeg",
+            "file_size": file.file_size,
+        }
+    candidates = (
+        ("animation", message.animation, "animation.mp4", "video/mp4"),
+        ("video", message.video, "video.mp4", "video/mp4"),
+        ("video_note", message.video_note, "video-note.mp4", "video/mp4"),
+        ("document", message.document, "document", "application/octet-stream"),
+        ("audio", message.audio, "audio.mp3", "audio/mpeg"),
+        ("voice", message.voice, "voice.ogg", "audio/ogg"),
+    )
+    for media_type, file, default_name, default_mime in candidates:
+        if file:
+            return {
+                "media_type": media_type,
+                "telegram_file_id": file.file_id,
+                "telegram_file_unique_id": file.file_unique_id,
+                "file_name": getattr(file, "file_name", None) or default_name,
+                "mime_type": getattr(file, "mime_type", None) or default_mime,
+                "file_size": file.file_size,
+            }
+    return None
 
 def is_domain_resolvable(domain: str) -> bool:
     try:
@@ -188,8 +224,9 @@ async def cmd_feedback(message: types.Message):
         return await message.answer("Обратная связь временно недоступна. Попробуйте позже.")
     log_user_action(message.from_user.id, "/feedback", message.from_user.username)
     await message.answer(
-        "💬 Напишите одним сообщением ваш вопрос, пожелание или описание проблемы.\n\n"
-        "Следующее текстовое сообщение будет отправлено администратору. "
+        "💬 Отправьте ваш вопрос, пожелание или описание проблемы. "
+        "Можно приложить фото, видео, документ, аудио или голосовое сообщение.\n\n"
+        "Следующее сообщение будет отправлено администратору. "
         "Чтобы отменить отправку, используйте /cancel_feedback."
     )
 
@@ -853,11 +890,14 @@ async def cmd_subdomains(message: types.Message):
         await message.answer(f"🔍 Найдено {len(subdomains)} поддоменов:\n{preview}", parse_mode="Markdown")
 
 
-@router.message(FeedbackPendingFilter(), F.text)
+@router.message(FeedbackPendingFilter())
 async def receive_feedback(message: types.Message):
-    text = message.text.strip()
-    if not text:
-        return await message.answer("Сообщение пустое. Напишите текст обращения.")
+    text = (message.text or message.caption or "").strip()
+    attachment = feedback_attachment(message)
+    if not text and not attachment:
+        return await message.answer(
+            "Этот тип сообщения пока не поддерживается. Отправьте текст, фото, видео, аудио или документ."
+        )
     if len(text) > 3500:
         return await message.answer(
             "Сообщение слишком длинное. Сократите его до 3500 символов и отправьте ещё раз."
@@ -868,6 +908,9 @@ async def receive_feedback(message: types.Message):
             message.from_user.id,
             message.from_user.username,
             text,
+            telegram_message_id=message.message_id,
+            media_group_id=message.media_group_id,
+            **(attachment or {}),
         )
     except Exception as exc:
         print(f"Failed to save feedback: {type(exc).__name__}: {exc}")
@@ -884,21 +927,31 @@ async def receive_feedback(message: types.Message):
         f"Feedback: created conversation {saved['conversation_id']}",
         message.from_user.username,
     )
-    await message.answer(
-        "✅ Сообщение передано администратору. Ответ придёт в этот чат от имени бота."
+    confirmation = (
+        "✅ Сообщение и вложение переданы администратору."
+        if attachment else
+        "✅ Сообщение передано администратору."
     )
+    await message.answer(f"{confirmation} Ответ придёт в этот чат от имени бота.")
 
     if BOT_OWNER_ID:
         username = f"@{message.from_user.username}" if message.from_user.username else "без username"
         try:
-            await message.bot.send_message(
-                BOT_OWNER_ID,
+            header = (
                 f"💬 Новое обращение #{saved['conversation_id']}\n"
                 f"Пользователь: {username}\n"
                 f"User ID: {message.from_user.id}\n\n"
-                f"{text}\n\n"
-                "Ответить можно в разделе «Обратная связь» административной панели.",
+                "Ответить можно в разделе «Обратная связь» административной панели."
             )
+            if attachment:
+                await message.bot.send_message(BOT_OWNER_ID, header)
+                await message.bot.copy_message(
+                    chat_id=BOT_OWNER_ID,
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id,
+                )
+            else:
+                await message.bot.send_message(BOT_OWNER_ID, f"{header}\n\n{text}")
         except Exception as exc:
             print(f"Failed to notify feedback owner: {type(exc).__name__}: {exc}")
 

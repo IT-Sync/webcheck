@@ -95,10 +95,12 @@ check and collect online-agent results before updating the stored status.
 
 Feedback starts through the authenticated Mini App API or `/feedback`. A
 persisted `feedback_conversations.waiting_for_user` flag routes the next
-non-command text message into `feedback_messages` instead of the site-input
-handler. The bot notifies `BOT_OWNER_ID`; authenticated operators read the
-thread and reply through the admin console, which sends the response through the
-same bot before recording it as an administrator message.
+non-command text or supported media message into `feedback_messages` instead of
+the site-input handler. Captions and Telegram file metadata are retained, while
+album items continue to match through `active_media_group_id`. The bot notifies
+`BOT_OWNER_ID` and copies attachments into the owner chat. Authenticated
+operators read the thread and reply through the admin console, which sends the
+response through the same bot before recording it as an administrator message.
 
 ## Web Routes
 
@@ -113,6 +115,7 @@ same bot before recording it as an administrator message.
 | `11003` | `/admin/*` | Admin token cookie/query | Operator console |
 | `11003` | `/admin/sites` | Admin token cookie/query | Searchable cross-user resource registry |
 | `11003` | `/admin/feedback/*` | Admin token cookie/query | Feedback inbox, threads, and replies |
+| `11003` | `/admin/feedback/media/{id}` | Admin token cookie/query | Telegram attachment proxy |
 | `11001` | `/health` | None | Agent server health probe |
 | `11001` | `/ws/agents` | Token in `agent.hello` | Remote-agent WebSocket |
 
@@ -181,8 +184,12 @@ application image rebuild does not replace customer data.
 
 `feedback_conversations` stores one durable thread per Telegram user, including
 whether the bot is waiting for the next message. `feedback_messages` stores the
-user/admin transcript and unread state. Deleting all data for a user cascades to
-the feedback transcript; ordinary site deletion does not affect feedback.
+user/admin transcript, unread state, captions, and Telegram file identifiers.
+Binary files remain in Telegram rather than PostgreSQL. The admin media route
+downloads them server-side without exposing the bot token, restricts inline
+content types, and forces other files to download. Deleting all data for a user
+cascades to the feedback transcript; ordinary site deletion does not affect
+feedback.
 
 `agent_check_results` contains short-lived raw results. The hourly maintenance
 job selects expired rows in bounded batches, aggregates each batch into

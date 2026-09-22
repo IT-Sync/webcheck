@@ -239,11 +239,14 @@ operations run outside the asyncio event loop. The first complete result is
 produced by the scheduler or by **Check now**.
 
 The **Feedback** button starts a persisted feedback session, sends instructions
-to the user's bot chat, and closes the Mini App. The next non-command text
-message is stored in the conversation and forwarded as a notification to
-`BOT_OWNER_ID`. Operators can read the complete thread under
-`/admin/feedback` and send a reply that is delivered by the bot. Users can also
-start the flow with `/feedback` or cancel it with `/cancel_feedback`.
+to the user's bot chat, and closes the Mini App. The next non-command message is
+stored in the conversation and forwarded as a notification to `BOT_OWNER_ID`.
+Text, captions, photos, videos, animations, documents, audio, voice messages,
+video notes, and multi-item Telegram media groups are supported. Operators can
+read the complete thread under `/admin/feedback`, view or download attachments
+through an authenticated proxy, and send a reply that is delivered by the bot.
+Users can also start the flow with `/feedback` or cancel it with
+`/cancel_feedback`.
 
 ## Remote Agents
 
@@ -362,8 +365,8 @@ After deployment, fully close and reopen the Telegram Mini App, then verify:
    backdrop tap where supported.
 4. Adding a temporary public domain completes within the configured DNS timeout.
 5. Pause, resume, manual check, and delete affect only the current user's site.
-6. Feedback closes the Mini App, captures the next text message in the bot,
-   appears under `/admin/feedback`, and delivers an administrator reply.
+6. Feedback closes the Mini App, captures text and attachments in the bot,
+   displays them under `/admin/feedback`, and delivers an administrator reply.
 7. Bot polling, scheduled monitoring, admin console, and remote agents continue
    to operate.
 

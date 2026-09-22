@@ -2,6 +2,7 @@ import asyncio
 import html
 import os
 from datetime import datetime
+from io import BytesIO
 from urllib.parse import quote, urlencode
 
 from aiohttp import web
@@ -23,6 +24,7 @@ from bot.infra.db import (
     get_event_logs,
     get_feedback_conversation,
     get_feedback_conversations,
+    get_feedback_message,
     get_feedback_messages,
     get_site_by_id,
     get_user_logs,
@@ -74,6 +76,37 @@ def feedback_badge(item: dict) -> str:
     if item["status"] == "answered":
         return '<span class="status-ok">Отвечено</span>'
     return '<span class="status-warning">Ожидает ответа</span>'
+
+
+def feedback_preview(item: dict) -> str:
+    if item.get("last_message"):
+        return item["last_message"]
+    labels = {
+        "photo": "Фото",
+        "animation": "Анимация",
+        "video": "Видео",
+        "video_note": "Видеосообщение",
+        "document": "Документ",
+        "audio": "Аудио",
+        "voice": "Голосовое сообщение",
+    }
+    label = labels.get(item.get("last_media_type"), "Вложение")
+    return f"📎 {item.get('last_file_name') or label}"
+
+
+def feedback_attachment_html(item: dict) -> str:
+    if not item.get("telegram_file_id"):
+        return ""
+    media_url = f"/admin/feedback/media/{item['id']}"
+    media_type = item.get("media_type")
+    file_name = esc(item.get("file_name") or "Вложение")
+    if media_type == "photo":
+        return f'<a class="thread-media" href="{media_url}" target="_blank"><img src="{media_url}" loading="lazy" alt="{file_name}"></a>'
+    if media_type in {"animation", "video", "video_note"}:
+        return f'<video class="thread-media-player" controls preload="metadata" src="{media_url}"></video>'
+    if media_type in {"audio", "voice"}:
+        return f'<audio class="thread-audio" controls preload="metadata" src="{media_url}"></audio>'
+    return f'<a class="attachment-card" href="{media_url}"><span>↓</span><strong>{file_name}</strong><small>Скачать вложение</small></a>'
 
 
 def redirect_messages(result: str) -> web.HTTPFound:
@@ -316,6 +349,13 @@ def page(title: str, body: str, active: str = "") -> web.Response:
     .thread-message p {{ margin: 7px 0 0; color: #d8e4dd; white-space: pre-wrap; overflow-wrap: anywhere; }}
     .thread-message header {{ position: static; padding: 0; border: 0; background: transparent; backdrop-filter: none; color: var(--muted); font: 700 9px/1 "Courier New", monospace; letter-spacing: .07em; text-transform: uppercase; }}
     .reply-panel {{ margin-top: 18px; }}
+    .thread-media {{ display: block; margin-top: 11px; overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: #07110f; }}
+    .thread-media img {{ display: block; width: 100%; max-height: 520px; object-fit: contain; }}
+    .thread-media-player {{ display: block; width: 100%; max-height: 520px; margin-top: 11px; border: 1px solid var(--line); border-radius: 11px; background: #020504; }}
+    .thread-audio {{ display: block; width: 100%; margin-top: 11px; }}
+    .attachment-card {{ display: grid; grid-template-columns: 34px 1fr; gap: 3px 10px; align-items: center; margin-top: 11px; padding: 11px; border: 1px solid rgba(74, 199, 184, .26); border-radius: 10px; background: rgba(74, 199, 184, .06); color: var(--text); text-decoration: none; }}
+    .attachment-card > span {{ grid-row: 1 / 3; display: grid; width: 32px; height: 32px; place-items: center; border-radius: 50%; background: var(--cyan); color: #07110f; font-weight: 900; }}
+    .attachment-card small {{ color: var(--muted); }}
     @media (max-width: 720px) {{
       header, nav {{ padding-left: 14px; padding-right: 14px; }}
       main {{ padding: 24px 12px 50px; }}
@@ -613,7 +653,7 @@ async def feedback(request: web.Request) -> web.Response:
   </span>
   <span class="feedback-preview">
     <small>{'Пользователь' if item['last_sender'] == 'user' else 'Администратор'}</small>
-    <p>{esc(item['last_message'] or 'Сообщений пока нет')}</p>
+    <p>{esc(feedback_preview(item))}</p>
   </span>
   <span class="feedback-meta">
     <small>{fmt_dt(item['last_message_created_at'])}</small>
@@ -647,7 +687,8 @@ async def feedback_detail(request: web.Request) -> web.Response:
     message_rows = "".join(
         f"""<article class="thread-message {'admin' if item['sender'] == 'admin' else 'user'}">
   <header><span>{'Администратор' if item['sender'] == 'admin' else esc(username)}</span><time>{fmt_dt(item['created_at'])}</time></header>
-  <p>{esc(item['message_text'])}</p>
+  {f'<p>{esc(item["message_text"])}</p>' if item['message_text'] else ''}
+  {feedback_attachment_html(item)}
 </article>"""
         for item in messages
     ) or '<div class="registry-empty">Сообщений пока нет.</div>'
@@ -709,6 +750,44 @@ async def reply_feedback(request: web.Request) -> web.Response:
         "web-admin",
     )
     raise redirect_feedback(conversation_id, "Ответ отправлен пользователю")
+
+
+@require_auth
+async def feedback_media(request: web.Request) -> web.Response:
+    message_id = int(request.match_info["message_id"])
+    item = get_feedback_message(message_id)
+    if not item or not item.get("telegram_file_id"):
+        raise web.HTTPNotFound(text="Вложение не найдено")
+    destination = BytesIO()
+    try:
+        await request.app["bot"].download(
+            item["telegram_file_id"],
+            destination=destination,
+            timeout=45,
+        )
+    except Exception as exc:
+        raise web.HTTPBadGateway(
+            text=f"Не удалось загрузить вложение из Telegram: {type(exc).__name__}"
+        )
+    safe_inline_types = {
+        "image/jpeg", "image/png", "image/webp", "image/gif",
+        "video/mp4", "video/webm", "audio/mpeg", "audio/ogg", "audio/mp4",
+    }
+    mime_type = item.get("mime_type") or "application/octet-stream"
+    inline = item.get("media_type") != "document" and mime_type in safe_inline_types
+    if not inline:
+        mime_type = "application/octet-stream"
+    file_name = item.get("file_name") or f"feedback-{message_id}"
+    disposition = "inline" if inline else "attachment"
+    return web.Response(
+        body=destination.getvalue(),
+        content_type=mime_type,
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(file_name, safe='')}",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @require_auth
@@ -1036,6 +1115,7 @@ def create_app(bot) -> web.Application:
     app.router.add_get("/admin/", dashboard)
     app.router.add_get("/admin/sites", sites)
     app.router.add_get("/admin/feedback", feedback)
+    app.router.add_get("/admin/feedback/media/{message_id:\\d+}", feedback_media)
     app.router.add_get("/admin/feedback/{conversation_id:\\d+}", feedback_detail)
     app.router.add_post("/admin/feedback/{conversation_id:\\d+}/reply", reply_feedback)
     app.router.add_get("/admin/users", users)
