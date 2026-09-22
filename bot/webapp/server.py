@@ -101,7 +101,11 @@ def _site_payload_for_user(site_id: int, user_id: int) -> dict | None:
 async def app_index(request: web.Request) -> web.FileResponse:
     if not WEB_APP_ENABLED:
         raise web.HTTPNotFound()
-    return web.FileResponse(STATIC_DIR / "index.html")
+    response = web.FileResponse(STATIC_DIR / "index.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 async def app_redirect(request: web.Request) -> web.HTTPFound:

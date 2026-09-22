@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#07110f">
   <title>Webcheck</title>
-  <link rel="stylesheet" href="/app/static/app.css?v=2">
+  <link rel="stylesheet" href="/app/static/app.css?v=3">
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <script src="/app/static/app.js?v=2" defer></script>
+  <script src="/app/static/app.js?v=3" defer></script>
 </head>
 <body>
   <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -93,7 +93,7 @@
 
   <dialog id="add-dialog">
     <form method="dialog" class="dialog-card" id="add-form">
-      <button class="dialog-close" id="close-add" aria-label="Закрыть" type="button">×</button>
+      <button class="dialog-close" id="close-add" name="action" value="cancel" aria-label="Закрыть" type="submit" formnovalidate>×</button>
       <p class="eyebrow">NEW ENDPOINT</p>
       <h2>Добавить сайт</h2>
       <p class="dialog-copy">Укажите домен или полный адрес. Мы нормализуем его и сразу добавим в мониторинг.</p>

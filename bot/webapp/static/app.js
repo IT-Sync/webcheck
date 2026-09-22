@@ -222,12 +222,18 @@
   function closeAdd() {
     if (!elements.dialog.open) return;
     elements.dialog.close();
+  }
+
+  function cleanupAddDialog() {
     document.body.classList.remove("dialog-open");
     telegram?.BackButton?.hide();
-    haptic();
   }
 
   async function addSite(event) {
+    if (event.submitter?.value === "cancel") {
+      cleanupAddDialog();
+      return;
+    }
     event.preventDefault();
     elements.formError.classList.add("hidden");
     elements.submit.disabled = true;
@@ -269,8 +275,12 @@
   document.querySelector("#current-date").textContent = new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "short" }).format(new Date()).toUpperCase();
   document.querySelector("#open-add").addEventListener("click", openAdd);
   document.querySelector("#empty-add").addEventListener("click", openAdd);
-  elements.closeAdd.addEventListener("click", closeAdd);
+  elements.closeAdd.addEventListener("click", (event) => {
+    event.preventDefault();
+    closeAdd();
+  });
   elements.form.addEventListener("submit", addSite);
+  elements.dialog.addEventListener("close", cleanupAddDialog);
   elements.dialog.addEventListener("cancel", (event) => {
     event.preventDefault();
     closeAdd();
