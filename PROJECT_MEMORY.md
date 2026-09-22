@@ -70,6 +70,15 @@ migrations. Back up PostgreSQL before major releases.
 - Continue responding to the user in Russian while repository-facing text stays
   in English.
 
+## Planned Development
+
+The product backlog in `TODO.md` covers resource history and charts, groups and
+search, maintenance windows, regional comparisons, monitoring health, incident
+confirmation and acknowledgement, notification preferences, bulk operations,
+public status pages, content/API checks, DNS changes, and team access. These
+features are not yet implemented. The proposed sequence starts with retention
+and aggregation before history, groups, maintenance, and public status pages.
+
 ## Validation Baseline
 
 The current suite contains 29 passing `unittest` tests. Standard validation is:
