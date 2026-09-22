@@ -2,7 +2,7 @@
   "use strict";
 
   const telegram = window.Telegram?.WebApp;
-  const state = { sites: [], user: null, limit: 0 };
+  const state = { sites: [], user: null, limit: 0, loaded: false };
   const elements = {
     list: document.querySelector("#site-list"),
     empty: document.querySelector("#empty-state"),
@@ -14,7 +14,10 @@
     formError: document.querySelector("#form-error"),
     submit: document.querySelector("#add-submit"),
     template: document.querySelector("#site-template"),
+    closeAdd: document.querySelector("#close-add"),
   };
+
+  const cacheKey = `webcheck.bootstrap.v2.${telegram?.initDataUnsafe?.user?.id || "anonymous"}`;
 
   function haptic(kind = "light") {
     telegram?.HapticFeedback?.impactOccurred(kind);
@@ -28,15 +31,26 @@
   }
 
   async function api(path, options = {}) {
-    const response = await fetch(path, {
-      ...options,
-      headers: { ...authHeaders(), ...(options.headers || {}) },
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload.ok) {
-      throw new Error(payload.error?.message || "Сервис временно недоступен");
+    const { timeoutMs = 15000, ...fetchOptions } = options;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(path, {
+        ...fetchOptions,
+        signal: controller.signal,
+        headers: { ...authHeaders(), ...(fetchOptions.headers || {}) },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error?.message || "Сервис временно недоступен");
+      }
+      return payload;
+    } catch (error) {
+      if (error.name === "AbortError") throw new Error("Сервер отвечает слишком долго. Попробуйте ещё раз.");
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
     }
-    return payload;
   }
 
   function hostFromUrl(value) {
@@ -127,6 +141,35 @@
     updateMetrics();
   }
 
+  function applyBootstrap(payload, { cache = true } = {}) {
+    state.sites = payload.sites || [];
+    state.user = payload.user || null;
+    state.limit = payload.limits?.sites || 0;
+    state.loaded = true;
+    const name = state.user?.first_name || state.user?.username || "пользователь";
+    elements.welcome.textContent = `${name}, мониторинг активен. Данные синхронизированы с вашим Telegram-ботом.`;
+    render();
+    if (cache) {
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify({ ...payload, cached_at: Date.now() }));
+      } catch (_) {
+        // Storage may be disabled by the client.
+      }
+    }
+  }
+
+  function renderCachedBootstrap() {
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(cacheKey));
+      if (!cached?.sites || !cached?.user) return false;
+      applyBootstrap(cached, { cache: false });
+      elements.welcome.textContent = "Показываем последние данные, обновляем статусы…";
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function confirmDelete(host) {
     return new Promise((resolve) => {
       if (telegram?.showConfirm) {
@@ -146,7 +189,11 @@
       if (endpointAction === "delete") {
         await api(`/api/webapp/sites/${site.id}`, { method: "DELETE" });
       } else {
-        const payload = await api(`/api/webapp/sites/${site.id}/${endpointAction}`, { method: "POST", body: "{}" });
+        const payload = await api(`/api/webapp/sites/${site.id}/${endpointAction}`, {
+          method: "POST",
+          body: "{}",
+          timeoutMs: endpointAction === "check" ? 45000 : 15000,
+        });
         if (payload.site) {
           state.sites = state.sites.map((item) => item.id === site.id ? payload.site : item);
         }
@@ -166,14 +213,22 @@
     elements.formError.classList.add("hidden");
     elements.input.value = "";
     elements.dialog.showModal();
+    document.body.classList.add("dialog-open");
+    telegram?.BackButton?.show();
     setTimeout(() => elements.input.focus(), 120);
+    haptic();
+  }
+
+  function closeAdd() {
+    if (!elements.dialog.open) return;
+    elements.dialog.close();
+    document.body.classList.remove("dialog-open");
+    telegram?.BackButton?.hide();
     haptic();
   }
 
   async function addSite(event) {
     event.preventDefault();
-    const submitter = event.submitter;
-    if (submitter?.value === "cancel") return elements.dialog.close();
     elements.formError.classList.add("hidden");
     elements.submit.disabled = true;
     elements.submit.textContent = "Проверяем адрес…";
@@ -183,7 +238,7 @@
         body: JSON.stringify({ url: elements.input.value }),
       });
       state.sites.push(payload.site);
-      elements.dialog.close();
+      closeAdd();
       render();
       telegram?.HapticFeedback?.notificationOccurred("success");
     } catch (error) {
@@ -200,16 +255,13 @@
     hideNotice();
     try {
       if (!telegram?.initData) throw new Error("Откройте приложение из Telegram-бота, чтобы войти безопасно.");
-      const payload = await api("/api/webapp/bootstrap");
-      state.sites = payload.sites;
-      state.user = payload.user;
-      state.limit = payload.limits.sites;
-      const name = payload.user.first_name || payload.user.username || "пользователь";
-      elements.welcome.textContent = `${name}, мониторинг активен. Данные синхронизированы с вашим Telegram-ботом.`;
-      render();
+      const payload = await api("/api/webapp/bootstrap", { timeoutMs: 10000 });
+      applyBootstrap(payload);
     } catch (error) {
-      state.sites = [];
-      render();
+      if (!state.loaded) {
+        state.sites = [];
+        render();
+      }
       showNotice(error.message);
     }
   }
@@ -217,11 +269,21 @@
   document.querySelector("#current-date").textContent = new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "short" }).format(new Date()).toUpperCase();
   document.querySelector("#open-add").addEventListener("click", openAdd);
   document.querySelector("#empty-add").addEventListener("click", openAdd);
+  elements.closeAdd.addEventListener("click", closeAdd);
   elements.form.addEventListener("submit", addSite);
+  elements.dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeAdd();
+  });
+  elements.dialog.addEventListener("click", (event) => {
+    if (event.target === elements.dialog) closeAdd();
+  });
+  telegram?.BackButton?.onClick(closeAdd);
 
   telegram?.ready();
   telegram?.expand();
   telegram?.setHeaderColor?.("#07110f");
   telegram?.setBackgroundColor?.("#07110f");
+  renderCachedBootstrap();
   load();
 })();

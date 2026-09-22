@@ -102,8 +102,10 @@ during one release to avoid locking out operators.
 
 ### 7. Blocking and external checks — medium
 
-DNS, WHOIS, certificate, and PostgreSQL operations include synchronous paths. A
-slow dependency can delay unrelated bot and web requests.
+The central DNS lookup and SSL socket check now run through `asyncio.to_thread`,
+so scheduled checks no longer block Mini App responses while waiting for those
+operations. PostgreSQL and some auxiliary lookup paths remain synchronous, and a
+slow dependency can still delay unrelated bot and web requests.
 
 Recommended follow-up: isolate blocking calls in bounded executors, apply explicit
 timeouts, and add per-provider concurrency limits. The Mini App already limits

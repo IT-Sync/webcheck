@@ -59,7 +59,7 @@ async def check_http_details(url, retries=3, delay=5, timeout_seconds=12):
     }
 
     allow_http_fallback = os.getenv("HTTP_ALLOW_PLAIN_FALLBACK", "1") == "1"
-    resolved_ip = resolve_hostname(url)
+    resolved_ip = await asyncio.to_thread(resolve_hostname, url)
     urls_to_try = [url]
     if allow_http_fallback and url.startswith("https://"):
         urls_to_try.append("http://" + url[len("https://"):])
@@ -137,7 +137,7 @@ async def check_http(url, retries=3, delay=5, timeout_seconds=12):
     return details["ok"]
 
 
-async def check_ssl(url):
+def _check_ssl_sync(url):
     hostname = url.replace("https://", "").replace("http://", "").split("/")[0].lower()
     try:
         ctx = ssl.create_default_context()
@@ -156,6 +156,10 @@ async def check_ssl(url):
                 return (expire_date - now).days
     except:
         return -1
+
+
+async def check_ssl(url):
+    return await asyncio.to_thread(_check_ssl_sync, url)
 
 async def check_domain_expiry(url):
     hostname = url.replace("https://", "").replace("http://", "").split("/")[0].lower()
