@@ -48,6 +48,19 @@ def fmt_dt(value) -> str:
     return esc(value)
 
 
+def admin_site_status(site: dict) -> tuple[str, str]:
+    if site["is_paused"]:
+        return "paused", "На паузе"
+    status = site.get("last_status") or ""
+    if "HTTP: DOWN" in status:
+        return "down", "Недоступен"
+    if "HTTP: OK" in status:
+        return "up", "В сети"
+    if status:
+        return "warning", "Внимание"
+    return "pending", "Ожидает"
+
+
 def redirect_messages(result: str) -> web.HTTPFound:
     return web.HTTPFound("/admin/messages?" + urlencode({"result": result}))
 
@@ -92,6 +105,7 @@ def require_auth(handler):
 def page(title: str, body: str, active: str = "") -> web.Response:
     nav = [
         ("dashboard", "/admin/", "Обзор"),
+        ("sites", "/admin/sites", "Сайты"),
         ("users", "/admin/users", "Пользователи"),
         ("logs", "/admin/logs", "Логи"),
         ("events", "/admin/events", "События"),
@@ -218,11 +232,13 @@ def page(title: str, body: str, active: str = "") -> web.Response:
       text-decoration: none;
       display: inline-block;
     }}
-    button.secondary {{ border: 1px solid var(--line); background: transparent; color: var(--text); }}
+    button.secondary, .button.secondary {{ border: 1px solid var(--line); background: transparent; color: var(--text); }}
     button.danger {{ background: rgba(255, 107, 85, .12); color: #ff8f7e; }}
     .actions {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }}
     .status-ok {{ color: var(--ok); font-weight: 650; }}
     .status-bad {{ color: var(--danger); font-weight: 650; }}
+    .status-warning {{ color: var(--amber); font-weight: 650; }}
+    .status-muted {{ color: var(--muted); font-weight: 650; }}
     .flash {{ margin-bottom: 16px; padding: 12px 14px; background: rgba(255, 181, 71, .08); border: 1px solid rgba(255, 181, 71, .35); border-radius: 10px; color: #ffd498; }}
     .split {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }}
     .split > section {{ min-width: 0; overflow-x: auto; }}
@@ -248,12 +264,28 @@ def page(title: str, body: str, active: str = "") -> web.Response:
     .user-head {{ display: flex; justify-content: space-between; align-items: start; gap: 16px; margin-bottom: 16px; }}
     .user-head h2 {{ margin-bottom: 4px; }}
     .subline {{ color: var(--muted); }}
+    .registry-head {{ display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 18px; }}
+    .registry-head h2 {{ margin-bottom: 5px; }}
+    .registry-total {{ color: var(--accent); font: 400 34px/1 Georgia, serif; white-space: nowrap; }}
+    .registry-total small {{ display: block; margin-top: 5px; color: var(--muted); font: 700 9px/1 "Courier New", monospace; letter-spacing: .09em; text-align: right; text-transform: uppercase; }}
+    .registry-tools {{ display: grid; grid-template-columns: minmax(240px, 1fr) minmax(170px, .35fr) auto; gap: 10px; align-items: end; margin-bottom: 14px; padding: 13px; border: 1px solid var(--line); border-radius: 13px; background: rgba(12, 25, 22, .8); }}
+    .registry-tools label {{ margin: 0; font: 700 9px/1 "Courier New", monospace; letter-spacing: .09em; text-transform: uppercase; }}
+    .registry-tools input, .registry-tools select {{ margin-top: 7px; }}
+    .registry-count {{ min-width: 112px; padding: 10px 12px; color: var(--muted); font: 700 10px/1 "Courier New", monospace; text-align: right; white-space: nowrap; }}
+    .site-owner {{ display: grid; gap: 3px; }}
+    .site-owner a {{ font-weight: 700; text-decoration: none; }}
+    .site-owner small {{ color: var(--muted); }}
+    .site-address {{ color: var(--text); font: 12px/1.45 "Courier New", monospace; overflow-wrap: anywhere; }}
+    .group-chip {{ display: inline-block; padding: 4px 7px; border: 1px solid rgba(74, 199, 184, .28); border-radius: 999px; color: #8fe0d7; font: 700 9px/1 "Courier New", monospace; }}
+    .registry-empty {{ padding: 28px; border: 1px dashed var(--line); border-radius: 13px; color: var(--muted); text-align: center; }}
     @media (max-width: 720px) {{
       header, nav {{ padding-left: 14px; padding-right: 14px; }}
       main {{ padding: 24px 12px 50px; }}
       .global-search {{ display: none; }}
       th, td {{ padding: 8px; }}
       .hide-sm {{ display: none; }}
+      .registry-tools {{ grid-template-columns: 1fr; }}
+      .registry-count {{ text-align: left; }}
     }}
   </style>
 </head>
@@ -271,10 +303,38 @@ def page(title: str, body: str, active: str = "") -> web.Response:
     const search = document.querySelector('#global-search');
     search?.addEventListener('input', () => {{
       const query = search.value.trim().toLocaleLowerCase('ru');
+      if (registrySearch) {{
+        registrySearch.value = search.value;
+        filterSiteRegistry();
+        return;
+      }}
       document.querySelectorAll('tbody tr').forEach((row) => {{
         row.hidden = query && !row.textContent.toLocaleLowerCase('ru').includes(query);
       }});
     }});
+    const registrySearch = document.querySelector('#site-registry-search');
+    const registryStatus = document.querySelector('#site-registry-status');
+    const registryRows = [...document.querySelectorAll('[data-site-row]')];
+    const registryCount = document.querySelector('#site-registry-count');
+    const registryEmpty = document.querySelector('#site-registry-empty');
+    function filterSiteRegistry() {{
+      const query = registrySearch?.value.trim().toLocaleLowerCase('ru') || '';
+      const status = registryStatus?.value || 'all';
+      let visible = 0;
+      registryRows.forEach((row) => {{
+        const queryMatches = !query || row.textContent.toLocaleLowerCase('ru').includes(query);
+        const statusMatches = status === 'all'
+          || row.dataset.status === status
+          || (status === 'attention' && ['down', 'warning'].includes(row.dataset.status));
+        row.hidden = !(queryMatches && statusMatches);
+        if (!row.hidden) visible += 1;
+      }});
+      if (registryCount) registryCount.textContent = `${{visible}} из ${{registryRows.length}}`;
+      if (registryEmpty) registryEmpty.hidden = visible !== 0;
+    }}
+    registrySearch?.addEventListener('input', filterSiteRegistry);
+    registryStatus?.addEventListener('change', filterSiteRegistry);
+    filterSiteRegistry();
   </script>
 </body>
 </html>"""
@@ -435,6 +495,70 @@ async def users(request: web.Request) -> web.Response:
   <tbody>{table}</tbody>
 </table>"""
     return page("Пользователи", body, "users")
+
+
+@require_auth
+async def sites(request: web.Request) -> web.Response:
+    rows = get_admin_sites()
+    priority = {"down": 0, "warning": 1, "pending": 2, "up": 3, "paused": 4}
+    decorated_rows = [(*admin_site_status(site), site) for site in rows]
+    decorated_rows.sort(
+        key=lambda item: (
+            priority[item[0]],
+            (item[2].get("url") or "").casefold(),
+            item[2]["id"],
+        )
+    )
+    status_classes = {
+        "up": "status-ok",
+        "down": "status-bad",
+        "warning": "status-warning",
+        "paused": "status-muted",
+        "pending": "status-muted",
+    }
+    table_rows = "".join(
+        f"""<tr data-site-row data-status="{status_kind}">
+  <td><span class="site-address">{esc(site['url'])}</span></td>
+  <td><div class="site-owner"><a href="/admin/users/{site['user_id']}">{esc('@' + site['username'] if site['username'] else 'без username')}</a><small>User ID: {site['user_id']}</small></div></td>
+  <td>{f'<span class="group-chip">{esc(site["site_group"])}</span>' if site['site_group'] else '<span class="muted">—</span>'}</td>
+  <td><span class="{status_classes[status_kind]}">{status_label}</span></td>
+  <td>{fmt_dt(site['last_checked'])}</td>
+  <td class="hide-sm">{esc((site['last_status'] or 'нет данных')[:180])}</td>
+  <td class="actions">
+    <a class="button" href="/admin/users/{site['user_id']}">Открыть</a>
+    <a class="button secondary" href="/admin/messages?user_id={site['user_id']}">Сообщение</a>
+  </td>
+</tr>"""
+        for status_kind, status_label, site in decorated_rows
+    )
+    body = f"""
+<div class="registry-head">
+  <div>
+    <h2>Все сайты пользователей</h2>
+    <div class="subline">Единый реестр ресурсов с быстрым переходом к владельцу</div>
+  </div>
+  <div class="registry-total">{len(rows)}<small>ресурсов</small></div>
+</div>
+<section class="registry-tools" aria-label="Поиск и фильтры ресурсов">
+  <label>Поиск<input id="site-registry-search" type="search" placeholder="Домен, username, User ID или группа" autocomplete="off" autofocus></label>
+  <label>Состояние<select id="site-registry-status">
+    <option value="all">Все состояния</option>
+    <option value="attention">Требуют внимания</option>
+    <option value="down">Недоступны</option>
+    <option value="up">В сети</option>
+    <option value="pending">Ожидают проверки</option>
+    <option value="paused">На паузе</option>
+  </select></label>
+  <div class="registry-count" id="site-registry-count">{len(rows)} из {len(rows)}</div>
+</section>
+<div style="overflow-x:auto">
+  <table id="site-registry">
+    <thead><tr><th>Ресурс</th><th>Владелец</th><th>Группа</th><th>Состояние</th><th>Проверка</th><th class="hide-sm">Последний результат</th><th></th></tr></thead>
+    <tbody>{table_rows}</tbody>
+  </table>
+</div>
+<div class="registry-empty" id="site-registry-empty" hidden>По этому запросу ресурсы не найдены.</div>"""
+    return page("Все сайты", body, "sites")
 
 
 @require_auth
@@ -760,6 +884,7 @@ def create_app(bot) -> web.Application:
     app.router.add_get("/admin/logout", logout)
     app.router.add_get("/admin", admin_root)
     app.router.add_get("/admin/", dashboard)
+    app.router.add_get("/admin/sites", sites)
     app.router.add_get("/admin/users", users)
     app.router.add_get("/admin/users/{user_id:\\d+}", user_detail)
     app.router.add_post("/admin/users/{user_id:\\d+}/delete", delete_user)

@@ -24,7 +24,8 @@ remain compatible.
   regional availability, response-time summaries, and monitoring events.
 - Bounded DNS validation when a site is added, including rejection of private,
   loopback, link-local, and other non-public targets.
-- Administrative console with user, site, event, message, and agent management.
+- Administrative console with a searchable all-site registry, direct owner
+  navigation, and user, event, message, and agent management.
 - Authenticated outbound WebSocket agents for checks from remote locations.
 - CSV exports for logs, sites, and subdomain discovery results.
 

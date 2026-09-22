@@ -103,6 +103,7 @@ check and collect online-agent results before updating the stored status.
 | `11003` | `/api/webapp/sites/{id}/*` | Telegram `initData` + ownership | Check or mutate a site |
 | `11003` | `/api/webapp/sites/{id}/history` | Telegram `initData` + ownership | Resource history and aggregates |
 | `11003` | `/admin/*` | Admin token cookie/query | Operator console |
+| `11003` | `/admin/sites` | Admin token cookie/query | Searchable cross-user resource registry |
 | `11001` | `/health` | None | Agent server health probe |
 | `11001` | `/ws/agents` | Token in `agent.hello` | Remote-agent WebSocket |
 

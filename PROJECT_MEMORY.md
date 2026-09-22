@@ -58,7 +58,10 @@ both ready and valid; failed concurrent builds can leave an invalid index that
 must be dropped and rebuilt concurrently.
 
 The administrative console uses the same dark control-room visual language as
-the Mini App and provides page-level table search.
+the Mini App. Its dedicated `/admin/sites` registry lists every customer's
+resource in problem-first order and supports immediate search by domain,
+username, Telegram user ID, or group plus status filtering and direct owner
+navigation. Other administrative tables retain page-level search.
 
 ## Production Deployment
 
@@ -100,7 +103,7 @@ and aggregation before history, groups, maintenance, and public status pages.
 
 ## Validation Baseline
 
-The current suite contains 33 passing `unittest` tests. Standard validation is:
+The current suite contains 38 passing `unittest` tests. Standard validation is:
 
 ```bash
 python -m unittest discover -s tests -v
