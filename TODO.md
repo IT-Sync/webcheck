@@ -46,9 +46,11 @@ should not become a chronological changelog.
 ## Product Feature Backlog
 
 These are planned capabilities, not implemented behavior. Retention,
-aggregation, seven-day resource history, groups, search, and the administrative
-UI redesign are implemented. Suggested next delivery order is longer-period
-analytics, maintenance windows, then public status pages.
+aggregation, seven-day resource history, groups, search, the searchable
+all-customer site registry, sortable administrative tables, and the feedback
+inbox with media support and bot replies are implemented. Suggested next
+delivery order is longer-period analytics, maintenance windows, then public
+status pages.
 
 ### High Priority
 
