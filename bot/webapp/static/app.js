@@ -2,7 +2,7 @@
   "use strict";
 
   const telegram = window.Telegram?.WebApp;
-  const state = { sites: [], user: null, limit: 0, loaded: false };
+  const state = { sites: [], user: null, limit: 0, loaded: false, filter: "all", sort: "priority" };
   const elements = {
     list: document.querySelector("#site-list"),
     empty: document.querySelector("#empty-state"),
@@ -15,6 +15,12 @@
     submit: document.querySelector("#add-submit"),
     template: document.querySelector("#site-template"),
     closeAdd: document.querySelector("#close-add"),
+    filterEmpty: document.querySelector("#filter-empty"),
+    filterLabel: document.querySelector("#filter-label"),
+    visibleCount: document.querySelector("#visible-count"),
+    sort: document.querySelector("#sort-select"),
+    monitorSection: document.querySelector("#monitor-section"),
+    metrics: [...document.querySelectorAll(".metric[data-filter]")],
   };
 
   const cacheKey = `webcheck.bootstrap.v2.${telegram?.initDataUnsafe?.user?.id || "anonymous"}`;
@@ -87,6 +93,27 @@
     Object.entries(counts).forEach(([key, value]) => {
       document.querySelector(`#metric-${key}`).textContent = value;
     });
+    elements.metrics.forEach((metric) => {
+      const active = metric.dataset.filter === state.filter;
+      metric.classList.toggle("is-active", active);
+      metric.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  function visibleSites() {
+    const filtered = state.sites.filter((site) => {
+      if (state.filter === "all") return true;
+      if (state.filter === "attention") return ["down", "warning"].includes(site.status_kind);
+      if (state.filter === "paused") return site.is_paused;
+      return site.status_kind === state.filter;
+    });
+    const priority = { down: 0, warning: 1, pending: 2, up: 3, paused: 4 };
+    return filtered.sort((left, right) => {
+      if (state.sort === "name") return hostFromUrl(left.url).localeCompare(hostFromUrl(right.url), "ru");
+      if (state.sort === "recent") return (Date.parse(right.last_checked) || 0) - (Date.parse(left.last_checked) || 0);
+      return (priority[left.status_kind] ?? 5) - (priority[right.status_kind] ?? 5)
+        || hostFromUrl(left.url).localeCompare(hostFromUrl(right.url), "ru");
+    });
   }
 
   function showNotice(message) {
@@ -135,10 +162,22 @@
   }
 
   function render() {
-    elements.list.replaceChildren(...state.sites.map(makeSiteCard));
-    elements.list.classList.toggle("hidden", state.sites.length === 0);
+    const sites = visibleSites();
+    const hasSites = state.sites.length > 0;
+    elements.list.replaceChildren(...sites.map(makeSiteCard));
+    elements.list.classList.toggle("hidden", sites.length === 0);
     elements.empty.classList.toggle("hidden", state.sites.length !== 0);
+    elements.filterEmpty.classList.toggle("hidden", !hasSites || sites.length !== 0);
+    elements.visibleCount.textContent = `${sites.length} из ${state.sites.length}`;
+    elements.filterLabel.textContent = ({ all: "Все ресурсы", up: "Ресурсы в сети", attention: "Требуют внимания", paused: "Мониторинг на паузе" })[state.filter];
     updateMetrics();
+  }
+
+  function setFilter(filter, { scroll = true } = {}) {
+    state.filter = filter;
+    render();
+    if (scroll) elements.monitorSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    haptic();
   }
 
   function applyBootstrap(payload, { cache = true } = {}) {
@@ -275,6 +314,15 @@
   document.querySelector("#current-date").textContent = new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "short" }).format(new Date()).toUpperCase();
   document.querySelector("#open-add").addEventListener("click", openAdd);
   document.querySelector("#empty-add").addEventListener("click", openAdd);
+  document.querySelector("#reset-filter").addEventListener("click", () => setFilter("all"));
+  elements.metrics.forEach((metric) => {
+    metric.addEventListener("click", () => setFilter(metric.dataset.filter));
+  });
+  elements.sort.addEventListener("change", () => {
+    state.sort = elements.sort.value;
+    render();
+    haptic();
+  });
   elements.closeAdd.addEventListener("click", (event) => {
     event.preventDefault();
     closeAdd();

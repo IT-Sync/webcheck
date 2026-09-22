@@ -96,7 +96,10 @@ button { -webkit-tap-highlight-color: transparent; }
 .signal-core { width: 9px; height: 9px; background: var(--acid); box-shadow: 0 0 24px var(--acid); }
 
 .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin: 18px 0 42px; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--line); }
-.metric { min-width: 0; padding: 16px 12px; background: rgba(12, 25, 22, 0.92); }
+.metric { min-width: 0; padding: 16px 12px; border: 0; background: rgba(12, 25, 22, 0.92); color: var(--paper); text-align: left; cursor: pointer; transition: background 160ms ease, box-shadow 160ms ease; }
+.metric:hover, .metric:focus-visible { background: rgba(20, 42, 35, 0.98); outline: none; }
+.metric.is-active { position: relative; z-index: 1; box-shadow: inset 0 -2px var(--acid); }
+.metric[data-filter="attention"].is-active { box-shadow: inset 0 -2px var(--amber); }
 .metric > span, .metric small { display: block; color: var(--muted); font: 600 9px/1.2 "Courier New", monospace; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .metric strong { display: block; margin: 8px 0 5px; font: 400 29px/1 Georgia, serif; }
 .metric-primary strong, .ok-label { color: var(--acid) !important; }
@@ -107,6 +110,15 @@ button { -webkit-tap-highlight-color: transparent; }
 .add-button, .submit-button { border: 0; border-radius: 999px; background: var(--acid); color: #13200c; font-weight: 750; cursor: pointer; }
 .add-button { padding: 11px 15px; }
 .add-button span { display: inline-block; margin-right: 5px; font-size: 20px; line-height: 10px; vertical-align: -1px; }
+
+.resource-controls { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin: -2px 0 15px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: rgba(8, 18, 15, 0.62); }
+.filter-state { display: grid; gap: 4px; min-width: 0; }
+.filter-state span { overflow: hidden; color: var(--paper); font: 600 12px/1.2 Georgia, serif; text-overflow: ellipsis; white-space: nowrap; }
+.filter-state b, .sort-control > span { color: var(--muted); font: 700 9px/1 "Courier New", monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+.sort-control { display: grid; gap: 5px; min-width: 168px; }
+.sort-control > span { text-align: right; }
+.sort-control select { width: 100%; padding: 7px 28px 7px 9px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: #0b1714; color: var(--paper); font-size: 11px; }
+.sort-control select:focus { border-color: var(--acid); }
 
 .site-list { display: grid; gap: 12px; }
 .site-card { position: relative; display: grid; grid-template-columns: 4px 1fr; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(115deg, rgba(18, 35, 31, 0.96), rgba(10, 22, 19, 0.96)); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.13); }
@@ -142,6 +154,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .empty-state { padding: 42px 20px; border: 1px dashed rgba(184, 243, 74, 0.26); border-radius: 16px; text-align: center; }
 .empty-state h3 { margin: 8px 0; font: 400 27px/1 Georgia, serif; }
 .empty-state > p:not(.eyebrow) { max-width: 390px; margin: 12px auto 18px; color: var(--muted); line-height: 1.5; }
+.filter-empty { padding: 28px 20px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); text-align: center; }
+.filter-empty p { margin: 0 0 12px; }
 .empty-radar { position: relative; width: 64px; height: 64px; margin: 0 auto 20px; border: 1px solid var(--line); border-radius: 50%; }
 .empty-radar::before, .empty-radar::after { content: ""; position: absolute; inset: 12px; border: 1px solid var(--line); border-radius: 50%; }
 .empty-radar::after { inset: 28px; background: var(--acid); border: 0; box-shadow: 0 0 14px var(--acid); }
@@ -183,6 +197,9 @@ dialog::backdrop { background: rgba(0, 7, 5, 0.78); backdrop-filter: blur(8px); 
   .hero { min-height: 246px; }
   .signal-orbit { opacity: 0.72; right: -72px; }
   .site-actions .danger-action { margin-left: 0; }
+  .resource-controls { align-items: stretch; flex-direction: column; }
+  .sort-control { min-width: 0; }
+  .sort-control > span { text-align: left; }
 }
 
 @media (prefers-reduced-motion: reduce) {

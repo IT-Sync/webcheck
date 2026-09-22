@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#07110f">
   <title>Webcheck</title>
-  <link rel="stylesheet" href="/app/static/app.css?v=3">
+  <link rel="stylesheet" href="/app/static/app.css?v=4">
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <script src="/app/static/app.js?v=3" defer></script>
+  <script src="/app/static/app.js?v=4" defer></script>
 </head>
 <body>
   <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -37,29 +37,29 @@
     </section>
 
     <section class="metrics reveal reveal-delay-2" aria-label="Сводка">
-      <article class="metric metric-primary">
+      <button class="metric metric-primary is-active" data-filter="all" type="button" aria-pressed="true">
         <span>Всего</span>
         <strong id="metric-total">—</strong>
         <small>ресурсов</small>
-      </article>
-      <article class="metric">
+      </button>
+      <button class="metric" data-filter="up" type="button" aria-pressed="false">
         <span>В сети</span>
         <strong id="metric-up">—</strong>
         <small class="ok-label">стабильно</small>
-      </article>
-      <article class="metric">
+      </button>
+      <button class="metric" data-filter="attention" type="button" aria-pressed="false">
         <span>Внимание</span>
         <strong id="metric-attention">—</strong>
         <small class="warn-label">проверить</small>
-      </article>
-      <article class="metric">
+      </button>
+      <button class="metric" data-filter="paused" type="button" aria-pressed="false">
         <span>Пауза</span>
         <strong id="metric-paused">—</strong>
         <small>отключено</small>
-      </article>
+      </button>
     </section>
 
-    <section class="monitor-section reveal reveal-delay-3">
+    <section class="monitor-section reveal reveal-delay-3" id="monitor-section">
       <div class="section-head">
         <div>
           <p class="eyebrow">MONITORED ENDPOINTS</p>
@@ -68,6 +68,21 @@
         <button class="add-button" id="open-add" type="button">
           <span>+</span> Добавить
         </button>
+      </div>
+
+      <div class="resource-controls">
+        <div class="filter-state">
+          <span id="filter-label">Все ресурсы</span>
+          <b id="visible-count">0 из 0</b>
+        </div>
+        <label class="sort-control" for="sort-select">
+          <span>Сортировка</span>
+          <select id="sort-select">
+            <option value="priority">Проблемные сначала</option>
+            <option value="name">По названию</option>
+            <option value="recent">Недавно проверенные</option>
+          </select>
+        </label>
       </div>
 
       <div class="notice hidden" id="notice" role="status"></div>
@@ -82,6 +97,11 @@
         <h3>Добавьте первый сайт</h3>
         <p>Мы будем следить за доступностью, SSL-сертификатом и сроком регистрации домена.</p>
         <button class="text-button" id="empty-add" type="button">Начать мониторинг →</button>
+      </div>
+
+      <div class="filter-empty hidden" id="filter-empty">
+        <p>В этой категории ресурсов нет.</p>
+        <button class="text-button" id="reset-filter" type="button">Показать все →</button>
       </div>
     </section>
 
