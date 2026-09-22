@@ -285,5 +285,5 @@ python -m unittest discover -s tests -v
 python -m compileall -q bot agent tests
 ```
 
-More detail is available in [docs/architecture.md](docs/architecture.md) and
+More detail is available in [ARCHITECTURE.md](ARCHITECTURE.md) and
 [docs/architecture-review.md](docs/architecture-review.md).

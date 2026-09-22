@@ -109,5 +109,5 @@ The agent returns:
 }
 ```
 
-See `../docs/architecture.md` for routing, authentication, and compatibility
+See `../ARCHITECTURE.md` for routing, authentication, and compatibility
 details.

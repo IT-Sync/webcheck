@@ -29,7 +29,9 @@ WebSocket connection.
 - `agent/` — standalone remote agent with its own Dockerfile, Compose file, and
   dependencies.
 - `tests/` — unit tests based on the standard-library `unittest` framework.
-- `docs/architecture.md` — architecture overview and agent message formats.
+- `ARCHITECTURE.md` — authoritative architecture, topology, and protocol map.
+- `PROJECT_MEMORY.md` — authoritative snapshot of current project state.
+- `TODO.md` — unfinished work, known limitations, and technical debt.
 
 The files `bot/db.py`, `bot/handlers.py`, `bot/monitor.py`, `bot/scheduler.py`,
 `bot/status_formatter.py`, `bot/subfinder.py`, `bot/url_utils.py`, and
@@ -43,6 +45,56 @@ imports unless the task explicitly calls for a breaking change.
   repository-facing text in English.
 - Respond to the user in Russian unless the user explicitly requests another
   language.
+
+## Persistent Project Memory
+
+- `PROJECT_MEMORY.md` is the primary authoritative snapshot of the current
+  project state, behavior, constraints, decisions, and deployment assumptions.
+- `ARCHITECTURE.md` is the authoritative reference for architecture, component
+  boundaries, data flow, infrastructure, integrations, authentication,
+  networking, and deployment topology.
+- `TODO.md` is the authoritative tracker for unfinished work, known bugs,
+  limitations, and technical debt.
+- Always read `PROJECT_MEMORY.md` before substantial work.
+- Read `TODO.md` when work concerns current priorities, bugs, limitations, or
+  unfinished work.
+- Read `ARCHITECTURE.md` before changing architecture, infrastructure,
+  integrations, deployment, APIs, storage, authentication, networking,
+  background processing, or major components.
+- Do not rescan the repository when project memory already contains the needed
+  context. Inspect only the relevant implementation unless broader inspection
+  is necessary to verify or complete the task.
+- If memory conflicts with code or configuration, verify the implementation and
+  correct the memory. Never preserve stale documentation.
+
+## Required Workflow for Substantial Tasks
+
+1. Read this file and `PROJECT_MEMORY.md`.
+2. Read `TODO.md` and/or `ARCHITECTURE.md` when the task touches their scope.
+3. Inspect the relevant implementation.
+4. Perform and validate the requested work.
+5. Check whether functionality, status, decisions, configuration, operations,
+   architecture, issues, limitations, or priorities changed.
+6. Update every affected memory file in the same task before the final response.
+
+A substantial task is incomplete while relevant memory is stale. Do not wait for
+the user to request memory maintenance. Tiny typo fixes, formatting-only changes,
+and behavior-neutral refactoring do not require memory updates.
+
+## Memory Update Rules
+
+- Update `PROJECT_MEMORY.md` when functionality, project status, features,
+  components, dependencies, configuration, runtime behavior, integrations,
+  constraints, known issues, limitations, decisions, deployment assumptions,
+  active work, or next steps change.
+- Update `ARCHITECTURE.md` when component boundaries, communication, APIs, data
+  flow, storage, authentication or authorization, external systems,
+  infrastructure, networking, runtime topology, deployment, workers, schedules,
+  queues, caches, or CI/CD change.
+- Update `TODO.md` when work is completed, discovered, reprioritized, made
+  obsolete, or when bugs or technical debt are introduced or resolved.
+- Keep memory concise and current. Record durable facts and decisions rather
+  than a chronological activity log.
 
 ## Environment Setup
 
@@ -118,7 +170,7 @@ and a valid `BOT_TOKEN`.
   `bot/checks/` and `agent/checks.py`.
 - Treat the WebSocket message format as an external contract. When adding fields,
   retain compatibility with older agents and update both sides, the examples in
-  `agent/README.md`, and `docs/architecture.md` when appropriate.
+  `agent/README.md`, and `ARCHITECTURE.md` when appropriate.
 - Do not rename Docker Compose services, entry points, or environment variables
   without updating the Dockerfiles, Compose files, `.env.example`, and README.
 
@@ -161,3 +213,5 @@ it.
    why.
 4. Keep the README, `.env.example`, and architecture documentation synchronized
    with changes to public behavior or configuration.
+5. Update `PROJECT_MEMORY.md`, `ARCHITECTURE.md`, and `TODO.md` when required by
+   the persistent-memory workflow above.
