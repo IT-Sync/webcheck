@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#07110f">
+  <title>Webcheck</title>
+  <link rel="stylesheet" href="/app/static/app.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/app/static/app.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-a" aria-hidden="true"></div>
+  <div class="ambient ambient-b" aria-hidden="true"></div>
+
+  <main class="shell">
+    <header class="topbar reveal">
+      <a class="brand" href="/app/" aria-label="Webcheck">
+        <span class="brand-mark"><i></i><i></i><i></i></span>
+        <span>webcheck</span>
+      </a>
+      <div class="live-pill"><span></span> live monitor</div>
+    </header>
+
+    <section class="hero reveal reveal-delay-1">
+      <div>
+        <p class="eyebrow">CONTROL SURFACE / <span id="current-date">TODAY</span></p>
+        <h1>Сайты под<br><em>наблюдением.</em></h1>
+      </div>
+      <div class="signal-orbit" aria-hidden="true">
+        <span class="orbit orbit-one"></span>
+        <span class="orbit orbit-two"></span>
+        <span class="signal-core"></span>
+      </div>
+      <p class="hero-note" id="welcome">Подключаем безопасный канал Telegram…</p>
+    </section>
+
+    <section class="metrics reveal reveal-delay-2" aria-label="Сводка">
+      <article class="metric metric-primary">
+        <span>Всего</span>
+        <strong id="metric-total">—</strong>
+        <small>ресурсов</small>
+      </article>
+      <article class="metric">
+        <span>В сети</span>
+        <strong id="metric-up">—</strong>
+        <small class="ok-label">стабильно</small>
+      </article>
+      <article class="metric">
+        <span>Внимание</span>
+        <strong id="metric-attention">—</strong>
+        <small class="warn-label">проверить</small>
+      </article>
+      <article class="metric">
+        <span>Пауза</span>
+        <strong id="metric-paused">—</strong>
+        <small>отключено</small>
+      </article>
+    </section>
+
+    <section class="monitor-section reveal reveal-delay-3">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">MONITORED ENDPOINTS</p>
+          <h2>Ваши ресурсы</h2>
+        </div>
+        <button class="add-button" id="open-add" type="button">
+          <span>+</span> Добавить
+        </button>
+      </div>
+
+      <div class="notice hidden" id="notice" role="status"></div>
+      <div class="site-list" id="site-list" aria-live="polite">
+        <div class="skeleton"></div>
+        <div class="skeleton"></div>
+      </div>
+
+      <div class="empty-state hidden" id="empty-state">
+        <div class="empty-radar" aria-hidden="true"><span></span></div>
+        <p class="eyebrow">NO SIGNALS YET</p>
+        <h3>Добавьте первый сайт</h3>
+        <p>Мы будем следить за доступностью, SSL-сертификатом и сроком регистрации домена.</p>
+        <button class="text-button" id="empty-add" type="button">Начать мониторинг →</button>
+      </div>
+    </section>
+
+    <footer>
+      <span>WEB/CHECK NODE</span>
+      <span>Защищено Telegram</span>
+    </footer>
+  </main>
+
+  <dialog id="add-dialog">
+    <form method="dialog" class="dialog-card" id="add-form">
+      <button class="dialog-close" value="cancel" aria-label="Закрыть" type="submit">×</button>
+      <p class="eyebrow">NEW ENDPOINT</p>
+      <h2>Добавить сайт</h2>
+      <p class="dialog-copy">Укажите домен или полный адрес. Мы нормализуем его и сразу добавим в мониторинг.</p>
+      <label for="site-url">Адрес сайта</label>
+      <div class="url-field">
+        <span>https://</span>
+        <input id="site-url" name="url" inputmode="url" autocomplete="url" placeholder="example.com" required>
+      </div>
+      <p class="form-error hidden" id="form-error"></p>
+      <button class="submit-button" id="add-submit" type="submit">Добавить в мониторинг</button>
+    </form>
+  </dialog>
+
+  <template id="site-template">
+    <article class="site-card">
+      <div class="status-rail"></div>
+      <div class="site-main">
+        <div class="site-title-row">
+          <div>
+            <span class="status-badge"><i></i><b></b></span>
+            <h3 class="site-host"></h3>
+          </div>
+          <button class="more-button" type="button" aria-label="Показать действия">•••</button>
+        </div>
+        <p class="site-url"></p>
+        <div class="site-meta">
+          <span class="checked-at"></span>
+          <span class="latency"></span>
+        </div>
+        <pre class="site-details"></pre>
+        <div class="site-actions hidden">
+          <button data-action="check" type="button">Проверить сейчас</button>
+          <button data-action="toggle" type="button"></button>
+          <button class="danger-action" data-action="delete" type="button">Удалить</button>
+        </div>
+      </div>
+    </article>
+  </template>
+</body>
+</html>

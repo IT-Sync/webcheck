@@ -8,6 +8,7 @@ from aiohttp import web
 from aiogram.exceptions import TelegramForbiddenError
 
 from bot.agent_server.registry import AGENT_REGISTRY
+from bot.webapp.server import WEB_APP_ENABLED, setup_webapp_routes
 from bot.infra.db import (
     admin_delete_site_by_id,
     delete_user_data,
@@ -700,7 +701,7 @@ async def resume_site(request: web.Request) -> web.Response:
 
 
 def create_app(bot) -> web.Application:
-    app = web.Application()
+    app = web.Application(client_max_size=64 * 1024)
     app["bot"] = bot
     app.router.add_get("/admin/login", login_page)
     app.router.add_post("/admin/login", login)
@@ -722,12 +723,13 @@ def create_app(bot) -> web.Application:
     app.router.add_post("/admin/sites/{site_id:\\d+}/delete", delete_site)
     app.router.add_post("/admin/sites/{site_id:\\d+}/pause", pause_site)
     app.router.add_post("/admin/sites/{site_id:\\d+}/resume", resume_site)
+    setup_webapp_routes(app)
     return app
 
 
 async def start_admin_console(bot):
-    if not ADMIN_WEB_TOKEN:
-        print("Admin web console disabled: ADMIN_WEB_TOKEN is not set")
+    if not ADMIN_WEB_TOKEN and not WEB_APP_ENABLED:
+        print("Web server disabled: ADMIN_WEB_TOKEN is not set and WEB_APP_ENABLED=0")
         return None
 
     app = create_app(bot)
@@ -735,5 +737,8 @@ async def start_admin_console(bot):
     await runner.setup()
     site = web.TCPSite(runner, ADMIN_WEB_HOST, ADMIN_WEB_PORT)
     await site.start()
-    print(f"Admin web console started on http://{ADMIN_WEB_HOST}:{ADMIN_WEB_PORT}/admin/")
+    if ADMIN_WEB_TOKEN:
+        print(f"Admin web console started on http://{ADMIN_WEB_HOST}:{ADMIN_WEB_PORT}/admin/")
+    if WEB_APP_ENABLED:
+        print(f"Telegram Mini App started on http://{ADMIN_WEB_HOST}:{ADMIN_WEB_PORT}/app/")
     return runner

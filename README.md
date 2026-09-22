@@ -93,6 +93,37 @@ http://127.0.0.1:8080/admin/
 - отправка сообщения одному пользователю от имени бота;
 - массовая отправка сообщения всем известным пользователям от имени бота.
 
+## Telegram Mini App
+
+The customer web application runs inside Telegram and uses the same sites and
+statuses as the bot. Users can view a summary, add sites, run checks, pause
+monitoring, and remove their resources.
+
+Authorization is performed on the server using signed Telegram `initData`. The
+Mini App never accepts a Telegram ID from the client without signature validation
+and does not require a separate users table, so existing data continues to work
+without migration.
+
+Configuration:
+
+```env
+WEB_APP_ENABLED=1
+WEB_APP_URL=https://monitor.example.com/app/
+WEB_APP_AUTH_MAX_AGE_SECONDS=86400
+WEB_APP_MAX_SITES_PER_USER=50
+WEB_APP_CHECK_TIMEOUT_SECONDS=10
+WEB_APP_AGENT_TIMEOUT_SECONDS=5
+```
+
+`WEB_APP_URL` must be a public HTTPS URL. Configure a reverse proxy to
+`127.0.0.1:${ADMIN_WEB_PORT:-8080}` for both `/app/` and `/api/webapp/`, then
+restart the application. On startup, the bot installs the Webcheck menu button,
+while `/start` and `/app` display an inline button that launches the Mini App.
+
+The Mini App and administrative console run in one aiohttp application but use
+independent authorization: `/app/` uses Telegram `initData`, while `/admin/` uses
+`ADMIN_WEB_TOKEN`.
+
 ## Remote Agent
 Подпроект агента находится в `agent/`. Агент запускается отдельным Docker-контейнером на удалённом сервере, сам подключается к центральному серверу по WebSocket и выполняет проверки ресурсов из своей страны/сети.
 

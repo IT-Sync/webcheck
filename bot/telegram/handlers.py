@@ -35,6 +35,7 @@ from urllib.parse import urlparse
 
 router = Router()
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
+WEB_APP_URL = os.getenv("WEB_APP_URL", "").strip()
 ADMIN_COMMANDS_TEXT = (
     "🛠 Админ-команды:\n"
     "/admin_help — список админских команд\n"
@@ -69,6 +70,14 @@ def build_site_keyboard(url, site_id=None, paused=False):
     else:
         kb.button(text="📊 Статус", callback_data=f"status:{url}")
         kb.button(text="🗑 Удалить", callback_data=f"delete:{url}")
+    return kb.as_markup()
+
+
+def build_web_app_keyboard():
+    if not WEB_APP_URL:
+        return None
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Открыть Webcheck", web_app=types.WebAppInfo(url=WEB_APP_URL))
     return kb.as_markup()
 
 def format_cached_status(site_row, paused=None):
@@ -138,7 +147,20 @@ async def cmd_start(message: types.Message):
         "— сайт станет недоступен\n"
         "— до окончания SSL-сертификата останется 14 дней или меньше\n"
         "— до окончания регистрации домена останется 14 дней или меньше.",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=build_web_app_keyboard(),
+    )
+
+
+@router.message(F.text == "/app")
+async def cmd_app(message: types.Message):
+    log_user_action(message.from_user.id, "/app", message.from_user.username)
+    keyboard = build_web_app_keyboard()
+    if not keyboard:
+        return await message.answer("Web-приложение пока не настроено.")
+    await message.answer(
+        "Откройте панель мониторинга, чтобы управлять своими сайтами.",
+        reply_markup=keyboard,
     )
 
 @router.message(F.text == "/help")
@@ -155,6 +177,7 @@ async def cmd_help(message: types.Message):
         "/statusme — Сводный отчёт по вашим ресурсам\n"
         "/statusme &lt;URL&gt; — Проверить статус конкретного сайта\n"
         "/weekly — То же, что /statusme\n"
+        "/app — Открыть web-приложение\n"
         "/subdomains &lt;домен&gt; — Найти поддомены \n\n"
         "🔐 <b>Я проверяю:</b>\n"
         "— доступность сайта (HTTP)\n"
