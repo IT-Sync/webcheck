@@ -6,6 +6,7 @@ from bot.infra.db import (
     start_site_incident, clear_site_incident, get_latest_agent_results_for_urls
 )
 from bot.infra.db import get_site_flags_by_id, set_site_flags_by_id
+from bot.infra.maintenance import run_database_maintenance
 from bot.agent_server.checks import check_with_agents
 from bot.checks.monitor import check_domain_expiry, check_http_details
 from bot.checks.service import check_resource
@@ -20,6 +21,7 @@ from datetime import datetime
 from aiogram.exceptions import TelegramForbiddenError
 import os
 import asyncio
+import time
 
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
 MAX_CONCURRENT_CHECKS = int(os.getenv("MAX_CONCURRENT_CHECKS", "30"))
@@ -39,6 +41,7 @@ WEEKLY_REPORT_DAY = os.getenv("WEEKLY_REPORT_DAY", "mon")
 WEEKLY_REPORT_HOUR = int(os.getenv("WEEKLY_REPORT_HOUR", "9"))
 WEEKLY_REPORT_MINUTE = int(os.getenv("WEEKLY_REPORT_MINUTE", "0"))
 SCHEDULER_TIMEZONE = os.getenv("SCHEDULER_TIMEZONE", "Europe/Moscow")
+DB_MAINTENANCE_INTERVAL_HOURS = max(1, int(os.getenv("DB_MAINTENANCE_INTERVAL_HOURS", "1")))
 
 async def monitor(bot):
     sites = get_all_site_checks()
@@ -47,6 +50,23 @@ async def monitor(bot):
     for row in sites:
         tasks.append(process_site_limited(bot, semaphore, row))
     await asyncio.gather(*tasks)
+
+
+async def maintain_database():
+    started_at = time.monotonic()
+    try:
+        result = await asyncio.to_thread(run_database_maintenance)
+        if result["enabled"]:
+            print(
+                "Database maintenance completed: "
+                + ", ".join(
+                    f"{table}={count}"
+                    for table, count in result["deleted"].items()
+                )
+                + f", duration_seconds={time.monotonic() - started_at:.2f}"
+            )
+    except Exception as exc:
+        print(f"Database maintenance failed: {type(exc).__name__}: {exc}")
 
 async def process_site_limited(bot, semaphore, site_row):
     async with semaphore:
@@ -346,5 +366,12 @@ async def start_scheduler(bot):
         hour=WEEKLY_REPORT_HOUR,
         minute=WEEKLY_REPORT_MINUTE,
         args=[bot],
+    )
+    scheduler.add_job(
+        maintain_database,
+        "interval",
+        hours=DB_MAINTENANCE_INTERVAL_HOURS,
+        max_instances=1,
+        coalesce=True,
     )
     scheduler.start()

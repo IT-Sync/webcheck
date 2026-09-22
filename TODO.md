@@ -8,26 +8,6 @@ should not become a chronological changelog.
 
 ## High Priority
 
-- Implement configurable PostgreSQL retention and scheduled cleanup. The current
-  `events`, `user_logs`, `bot_messages`, and `agent_check_results` tables retain
-  rows indefinitely, while `agent_check_results` may grow by one row per site,
-  online agent, and monitoring cycle. The implementation should:
-  - define separate retention settings with safe production defaults, initially
-    30 days for agent results, 90 days for user and bot logs, and 365 days for
-    incident events;
-  - never delete active `sites` rows or their current status and incident state;
-  - delete old rows in bounded batches using indexed `created_at` predicates so
-    cleanup does not hold long locks or delay monitoring;
-  - run on a configurable low-frequency schedule, prevent overlapping cleanup
-    jobs, and isolate failures from bot polling and monitoring;
-  - report deleted-row counts, duration, and failures in application logs;
-  - document that normal `VACUUM` makes deleted space reusable but does not
-    immediately reduce the database files on disk;
-  - include PostgreSQL integration tests for retention boundaries, batching,
-    disabled cleanup, empty tables, and rollback after an error;
-  - update `.env.example`, `README.md`, `PROJECT_MEMORY.md`, and
-    `ARCHITECTURE.md` when implemented, with a backup and rollout procedure for
-    the first production cleanup.
 - Replace the process-wide synchronous psycopg2 connection and cursor with a
   repository layer backed by a connection pool. Preserve current public
   function signatures during incremental migration and add PostgreSQL
@@ -44,7 +24,8 @@ should not become a chronological changelog.
   operator login path for one release.
 - Add disposable PostgreSQL and aiohttp integration tests covering Mini App
   ownership checks, startup against old and current schemas, scheduler behavior,
-  notification deduplication, and WebSocket-agent timeouts.
+  notification deduplication, retention boundaries and rollback, aggregation,
+  and WebSocket-agent timeouts.
 - Continue separating large Telegram, scheduler, admin, and database modules
   behind existing compatibility imports.
 - Apply explicit timeouts and bounded concurrency to remaining synchronous or
@@ -63,23 +44,21 @@ should not become a chronological changelog.
 
 ## Product Feature Backlog
 
-These are planned capabilities, not implemented behavior. Suggested delivery
-order: retention and aggregation, resource history, groups and search,
-maintenance windows, then public status pages. Other items can follow according
-to customer demand and the dependencies below.
+These are planned capabilities, not implemented behavior. Retention,
+aggregation, seven-day resource history, groups, search, and the administrative
+UI redesign are implemented. Suggested next delivery order is longer-period
+analytics, maintenance windows, then public status pages.
 
 ### High Priority
 
-- [ ] Resource detail page with incident history: show outages, recoveries,
-  incident duration, and regional check results in the Telegram Mini App.
-  Introduce structured incident records; the overwritten central status cannot
-  reconstruct a complete historical timeline retrospectively.
 - [ ] Availability and response-time charts for daily, weekly, and monthly
-  periods, including average latency and peaks. Introduce hourly and daily
-  aggregates before pruning raw results; define how missing checks and planned
-  maintenance affect availability calculations.
-- [ ] Groups, tags, and search: organize resources by customer, project, or
-  environment and quickly find a domain within the user's accessible resources.
+  periods, including average latency and peaks. Hourly agent aggregates now
+  exist; add daily rollups and define how missing checks and planned maintenance
+  affect availability calculations. Introduce structured central incident
+  records because the overwritten central status cannot reconstruct historical
+  checks retrospectively.
+- [ ] Add multiple tags per resource alongside the implemented single group,
+  search, and group filter.
 - [ ] Maintenance windows: schedule alert suppression with automatic expiry.
   Make monitoring behavior during maintenance explicit and distinguish planned
   maintenance from outages in history and reports.

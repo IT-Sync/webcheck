@@ -69,11 +69,28 @@ c.execute('''CREATE TABLE IF NOT EXISTS agent_check_results (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )''')
 
+c.execute('''CREATE TABLE IF NOT EXISTS agent_check_hourly (
+    bucket_start TIMESTAMP NOT NULL,
+    url TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    country TEXT,
+    region TEXT,
+    checks INTEGER NOT NULL DEFAULT 0,
+    successful_checks INTEGER NOT NULL DEFAULT 0,
+    latency_sum_ms BIGINT NOT NULL DEFAULT 0,
+    latency_samples INTEGER NOT NULL DEFAULT 0,
+    max_latency_ms INTEGER,
+    PRIMARY KEY (bucket_start, url, agent_id)
+)''')
+
 conn.commit()
 
 # Методы
-def add_site(user_id, url, username=None):
-    c.execute("INSERT INTO sites (user_id, username, url) VALUES (%s, %s, %s) RETURNING id", (user_id, username, url))
+def add_site(user_id, url, username=None, site_group=""):
+    c.execute(
+        "INSERT INTO sites (user_id, username, url, site_group) VALUES (%s, %s, %s, %s) RETURNING id",
+        (user_id, username, url, site_group),
+    )
     site_id = c.fetchone()[0]
     conn.commit()
     return site_id
@@ -86,7 +103,8 @@ def get_sites_with_pause(user_id):
     c.execute(
         """
         SELECT id, user_id, username, url, last_status, last_checked,
-               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now
+               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now,
+               COALESCE(site_group, '')
         FROM sites
         WHERE user_id = %s
         ORDER BY id
@@ -135,6 +153,15 @@ def set_site_paused_until_by_id(site_id, user_id, paused_until):
     c.execute(
         "UPDATE sites SET paused_until = %s WHERE id = %s AND user_id = %s",
         (paused_until, site_id, user_id)
+    )
+    conn.commit()
+    return c.rowcount > 0
+
+
+def set_site_group_by_id(site_id, user_id, site_group):
+    c.execute(
+        "UPDATE sites SET site_group = %s WHERE id = %s AND user_id = %s",
+        (site_group, site_id, user_id),
     )
     conn.commit()
     return c.rowcount > 0
@@ -384,7 +411,8 @@ def get_admin_sites(user_id=None):
         params.append(user_id)
     c.execute(f"""
         SELECT id, user_id, username, url, last_status, last_checked,
-               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now
+               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now,
+               COALESCE(site_group, '')
         FROM sites
         {where}
         ORDER BY user_id, id
@@ -398,6 +426,7 @@ def get_admin_sites(user_id=None):
             "last_status": row[4],
             "last_checked": row[5],
             "is_paused": row[6],
+            "site_group": row[7],
         }
         for row in c.fetchall()
     ]
@@ -421,7 +450,8 @@ def get_report_sites(user_id=None):
         params.append(user_id)
     c.execute(f"""
         SELECT id, user_id, username, url, last_status, last_checked,
-               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now
+               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now,
+               COALESCE(site_group, '')
         FROM sites
         {where}
         ORDER BY user_id, id
@@ -436,6 +466,7 @@ def get_report_sites(user_id=None):
             "last_status": row[4],
             "last_checked": row[5],
             "is_paused": row[6],
+            "site_group": row[7],
         }
         for row in rows
     ]
@@ -625,6 +656,117 @@ def get_latest_agent_results_for_urls(urls, max_age_minutes=60):
             "checked_at": row[13],
         })
     return grouped
+
+
+def get_site_history_for_user(site_id, user_id, days=7):
+    days = max(1, min(int(days), 90))
+    site = get_site_for_user(site_id, user_id)
+    if not site:
+        return None
+
+    url = site[3]
+    since = datetime.utcnow() - timedelta(days=days)
+    c.execute(
+        """
+        SELECT created_at, message
+        FROM events
+        WHERE url = %s
+          AND created_at >= %s
+          AND (
+              message ILIKE '%%недоступен%%'
+              OR message ILIKE '%%восстанов%%'
+              OR message ILIKE '%%истекает%%'
+              OR message ILIKE '%%продлён%%'
+              OR message ILIKE '%%DOWN%%'
+          )
+        ORDER BY created_at DESC
+        LIMIT 50
+        """,
+        (url, since),
+    )
+    events = [
+        {"created_at": row[0], "message": row[1]}
+        for row in c.fetchall()
+    ]
+
+    c.execute(
+        """
+        WITH points AS (
+            SELECT date_trunc('hour', created_at) AS bucket_start,
+                   agent_id,
+                   MAX(country) AS country,
+                   MAX(region) AS region,
+                   COUNT(*)::bigint AS checks,
+                   COUNT(*) FILTER (WHERE ok)::bigint AS successful_checks,
+                   COALESCE(SUM(
+                       CASE WHEN (http->>'latency_ms') ~ '^[0-9]+$'
+                            THEN (http->>'latency_ms')::bigint ELSE 0 END
+                   ), 0)::bigint AS latency_sum_ms,
+                   COUNT(*) FILTER (
+                       WHERE (http->>'latency_ms') ~ '^[0-9]+$'
+                   )::bigint AS latency_samples,
+                   MAX(
+                       CASE WHEN (http->>'latency_ms') ~ '^[0-9]+$'
+                            THEN (http->>'latency_ms')::integer END
+                   ) AS max_latency_ms
+            FROM agent_check_results
+            WHERE url = %s AND created_at >= %s
+            GROUP BY 1, 2
+            UNION ALL
+            SELECT bucket_start, agent_id, country, region, checks,
+                   successful_checks, latency_sum_ms, latency_samples,
+                   max_latency_ms
+            FROM agent_check_hourly
+            WHERE url = %s AND bucket_start >= %s
+        )
+        SELECT bucket_start, agent_id, MAX(country), MAX(region),
+               SUM(checks), SUM(successful_checks), SUM(latency_sum_ms),
+               SUM(latency_samples), MAX(max_latency_ms)
+        FROM points
+        GROUP BY bucket_start, agent_id
+        ORDER BY bucket_start, agent_id
+        """,
+        (url, since, url, since),
+    )
+    points = []
+    total_checks = 0
+    successful_checks = 0
+    latency_sum = 0
+    latency_samples = 0
+    for row in c.fetchall():
+        checks = int(row[4] or 0)
+        successes = int(row[5] or 0)
+        point_latency_sum = int(row[6] or 0)
+        point_latency_samples = int(row[7] or 0)
+        total_checks += checks
+        successful_checks += successes
+        latency_sum += point_latency_sum
+        latency_samples += point_latency_samples
+        points.append({
+            "bucket_start": row[0],
+            "agent_id": row[1],
+            "country": row[2],
+            "region": row[3],
+            "checks": checks,
+            "successful_checks": successes,
+            "availability": round(successes * 100 / checks, 2) if checks else None,
+            "avg_latency_ms": round(point_latency_sum / point_latency_samples) if point_latency_samples else None,
+            "max_latency_ms": row[8],
+        })
+
+    return {
+        "site_id": site_id,
+        "url": url,
+        "days": days,
+        "summary": {
+            "checks": total_checks,
+            "availability": round(successful_checks * 100 / total_checks, 2) if total_checks else None,
+            "avg_latency_ms": round(latency_sum / latency_samples) if latency_samples else None,
+            "events": len(events),
+        },
+        "points": points,
+        "events": events,
+    }
 
 def get_user_logs():
     since = datetime.utcnow() - timedelta(days=14)
@@ -964,6 +1106,11 @@ def migrate_add_notification_flags():
                            WHERE table_name='sites' AND column_name='last_resolved_ip') THEN
                 ALTER TABLE sites ADD COLUMN last_resolved_ip TEXT;
             END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='sites' AND column_name='site_group') THEN
+                ALTER TABLE sites ADD COLUMN site_group TEXT DEFAULT '';
+            END IF;
         END
         $$;
     """)
@@ -975,5 +1122,8 @@ def migrate_add_notification_flags():
     c.execute("CREATE INDEX IF NOT EXISTS idx_bot_messages_user_id ON bot_messages(user_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_results_url_created_at ON agent_check_results(url, created_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_results_agent_id ON agent_check_results(agent_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_hourly_url_bucket ON agent_check_hourly(url, bucket_start DESC)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_events_url_created_at ON events(url, created_at DESC)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sites_user_group ON sites(user_id, site_group)")
 
     conn.commit()

@@ -79,6 +79,12 @@ available, then refreshes `/api/webapp/bootstrap`. Metrics act as status filters
 and the default client-side sort places problematic resources first. The cache
 is a display optimization and is never authoritative.
 
+Sites have an optional `site_group` field. Search and group filtering happen in
+the Mini App over the authenticated user's bootstrap payload. Group mutations
+verify site ownership on the server. The history endpoint also verifies
+ownership before combining relevant `events`, retained raw agent results, and
+`agent_check_hourly` aggregates.
+
 Before inserting a site, the server normalizes the URL, resolves its hostname
 with a bounded timeout, and rejects any non-global address. A full monitoring
 check is deliberately not part of insertion. DNS and TLS socket work runs in
@@ -95,6 +101,7 @@ check and collect online-agent results before updating the stored status.
 | `11003` | `/api/webapp/bootstrap` | Telegram `initData` | User, metrics, and sites |
 | `11003` | `/api/webapp/sites` | Telegram `initData` | Add a site |
 | `11003` | `/api/webapp/sites/{id}/*` | Telegram `initData` + ownership | Check or mutate a site |
+| `11003` | `/api/webapp/sites/{id}/history` | Telegram `initData` + ownership | Resource history and aggregates |
 | `11003` | `/admin/*` | Admin token cookie/query | Operator console |
 | `11001` | `/health` | None | Agent server health probe |
 | `11001` | `/ws/agents` | Token in `agent.hello` | Remote-agent WebSocket |
@@ -161,6 +168,18 @@ The Mini App reuses the existing `sites.user_id` Telegram identity and does not
 add a second account model. Startup schema operations are additive and
 idempotent. The PostgreSQL data directory is bind-mounted at `./pgdata`, so an
 application image rebuild does not replace customer data.
+
+`agent_check_results` contains short-lived raw results. The hourly maintenance
+job selects expired rows in bounded batches, aggregates each batch into
+`agent_check_hourly`, and deletes the selected rows in the same transaction.
+The job uses its own PostgreSQL connection and runs through `asyncio.to_thread`
+so maintenance does not share the global application cursor or block the event
+loop. Retention is opt-in through `DB_MAINTENANCE_ENABLED`; the maintenance
+interval is configurable and current defaults keep seven days of raw agent
+results, 90 days of user and bot logs, and 365 days of events. Cleanup requires
+an operator-created concurrent index on raw result
+timestamps; the application deliberately avoids building that large index in a
+startup transaction.
 
 The primary architectural constraint is the process-wide synchronous psycopg2
 connection and cursor. Database calls can block the event loop and concurrent

@@ -110,94 +110,122 @@ def page(title: str, body: str, active: str = "") -> web.Response:
   <title>{esc(title)} · Webcheck Admin</title>
   <style>
     :root {{
-      color-scheme: light;
-      --bg: #f6f7f9;
-      --panel: #ffffff;
-      --text: #1f2933;
-      --muted: #65727f;
-      --line: #d9dee5;
-      --accent: #176b87;
-      --danger: #b42318;
-      --ok: #16794c;
+      color-scheme: dark;
+      --bg: #07110f;
+      --panel: #0c1916;
+      --panel-raised: #12231f;
+      --text: #e8f1eb;
+      --muted: #82978d;
+      --line: rgba(210, 235, 222, .14);
+      --accent: #b8f34a;
+      --cyan: #4ac7b8;
+      --danger: #ff6b55;
+      --ok: #b8f34a;
+      --amber: #ffb547;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
-      background: var(--bg);
+      background:
+        linear-gradient(rgba(184, 243, 74, .025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(184, 243, 74, .025) 1px, transparent 1px),
+        var(--bg);
+      background-size: 32px 32px;
       color: var(--text);
-      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 14px/1.5 "Aptos", "Segoe UI", sans-serif;
     }}
     header {{
-      background: #263238;
-      color: #fff;
-      padding: 14px 24px;
+      position: sticky;
+      z-index: 5;
+      top: 0;
+      background: rgba(7, 17, 15, .92);
+      color: var(--text);
+      padding: 14px clamp(16px, 4vw, 48px);
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(18px);
     }}
-    header h1 {{ margin: 0; font-size: 18px; font-weight: 650; }}
+    header h1 {{ margin: 0; font: 700 20px/1 Georgia, serif; letter-spacing: -.02em; }}
+    header h1 span {{ color: var(--accent); }}
+    .header-tools {{ display: flex; align-items: center; gap: 10px; }}
+    .global-search {{ width: min(280px, 28vw); background: var(--panel) !important; }}
     nav {{
       display: flex;
-      gap: 4px;
+      gap: 6px;
       overflow-x: auto;
-      padding: 10px 24px;
-      background: #e9edf2;
+      padding: 12px clamp(16px, 4vw, 48px);
+      background: rgba(12, 25, 22, .84);
       border-bottom: 1px solid var(--line);
     }}
     nav a {{
-      color: #24323d;
+      color: var(--muted);
       text-decoration: none;
-      padding: 8px 12px;
-      border-radius: 6px;
+      padding: 9px 13px;
+      border: 1px solid transparent;
+      border-radius: 999px;
       white-space: nowrap;
+      font: 700 10px/1 "Courier New", monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
     }}
-    nav a.active, nav a:hover {{ background: #fff; }}
-    main {{ max-width: 1180px; margin: 0 auto; padding: 24px; }}
-    h2 {{ margin: 0 0 16px; font-size: 22px; }}
+    nav a.active, nav a:hover {{ border-color: rgba(184, 243, 74, .35); background: rgba(184, 243, 74, .08); color: var(--accent); }}
+    main {{ max-width: 1320px; margin: 0 auto; padding: 34px clamp(14px, 4vw, 48px) 70px; }}
+    h2 {{ margin: 0 0 16px; font: 400 28px/1.1 Georgia, serif; letter-spacing: -.025em; }}
     .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }}
     .metric, .panel {{
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 16px;
+      border-radius: 14px;
+      padding: 18px;
     }}
-    .metric strong {{ display: block; font-size: 26px; line-height: 1.1; }}
+    .metric {{ position: relative; overflow: hidden; min-height: 112px; background: linear-gradient(135deg, var(--panel-raised), var(--panel)); }}
+    .metric::after {{ content: ""; position: absolute; right: -28px; bottom: -38px; width: 90px; height: 90px; border: 1px solid rgba(184, 243, 74, .13); border-radius: 50%; }}
+    .metric strong {{ display: block; margin-bottom: 16px; color: var(--accent); font: 400 34px/1 Georgia, serif; }}
     .metric span, .muted {{ color: var(--muted); }}
-    table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
-    th, td {{ padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
-    th {{ background: #eef2f5; font-size: 12px; text-transform: uppercase; color: #52616e; }}
+    .metric span {{ font: 700 9px/1.3 "Courier New", monospace; letter-spacing: .08em; text-transform: uppercase; }}
+    table {{ width: 100%; border-collapse: separate; border-spacing: 0; overflow: hidden; background: rgba(12, 25, 22, .94); border: 1px solid var(--line); border-radius: 13px; }}
+    th, td {{ padding: 12px 13px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    th {{ background: #10201c; color: var(--muted); font: 700 9px/1.2 "Courier New", monospace; letter-spacing: .09em; text-transform: uppercase; }}
+    tbody tr {{ transition: background 150ms ease; }}
+    tbody tr:hover {{ background: rgba(184, 243, 74, .035); }}
     tr:last-child td {{ border-bottom: 0; }}
-    code {{ background: #eef2f5; padding: 2px 5px; border-radius: 4px; }}
+    a {{ color: var(--cyan); }}
+    code {{ background: rgba(74, 199, 184, .1); color: #8fe0d7; padding: 3px 6px; border-radius: 5px; }}
     form.inline {{ display: inline; }}
     input, textarea, select {{
       width: 100%;
-      border: 1px solid #b8c2cc;
-      border-radius: 6px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
       padding: 9px 10px;
       font: inherit;
-      background: #fff;
+      background: #08120f;
+      color: var(--text);
     }}
     textarea {{ min-height: 140px; resize: vertical; }}
-    label {{ display: block; margin: 0 0 12px; color: #34414d; }}
+    label {{ display: block; margin: 0 0 12px; color: var(--muted); }}
     button, .button {{
       border: 0;
-      border-radius: 6px;
+      border-radius: 999px;
       padding: 9px 12px;
       background: var(--accent);
-      color: #fff;
+      color: #13200c;
       font: inherit;
+      font-weight: 750;
       cursor: pointer;
       text-decoration: none;
       display: inline-block;
     }}
-    button.secondary {{ background: #52616e; }}
-    button.danger {{ background: var(--danger); }}
+    button.secondary {{ border: 1px solid var(--line); background: transparent; color: var(--text); }}
+    button.danger {{ background: rgba(255, 107, 85, .12); color: #ff8f7e; }}
     .actions {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }}
     .status-ok {{ color: var(--ok); font-weight: 650; }}
     .status-bad {{ color: var(--danger); font-weight: 650; }}
-    .flash {{ margin-bottom: 16px; padding: 12px 14px; background: #e8f4f8; border: 1px solid #b7d8e3; border-radius: 8px; }}
+    .flash {{ margin-bottom: 16px; padding: 12px 14px; background: rgba(255, 181, 71, .08); border: 1px solid rgba(255, 181, 71, .35); border-radius: 10px; color: #ffd498; }}
     .split {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }}
+    .split > section {{ min-width: 0; overflow-x: auto; }}
     .chart {{
       min-height: 190px;
       display: flex;
@@ -206,7 +234,7 @@ def page(title: str, body: str, active: str = "") -> web.Response:
       padding: 14px 10px 8px;
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 13px;
       overflow-x: auto;
     }}
     .bar-item {{ min-width: 44px; display: grid; gap: 5px; justify-items: center; align-items: end; }}
@@ -215,23 +243,39 @@ def page(title: str, body: str, active: str = "") -> web.Response:
       border-radius: 5px 5px 0 0;
       background: var(--accent);
     }}
-    .bar-value {{ font-size: 12px; color: #34414d; }}
+    .bar-value {{ font-size: 12px; color: var(--text); }}
     .bar-label {{ font-size: 11px; color: var(--muted); white-space: nowrap; }}
     .user-head {{ display: flex; justify-content: space-between; align-items: start; gap: 16px; margin-bottom: 16px; }}
     .user-head h2 {{ margin-bottom: 4px; }}
     .subline {{ color: var(--muted); }}
     @media (max-width: 720px) {{
       header, nav {{ padding-left: 14px; padding-right: 14px; }}
-      main {{ padding: 16px 12px; }}
+      main {{ padding: 24px 12px 50px; }}
+      .global-search {{ display: none; }}
       th, td {{ padding: 8px; }}
       .hide-sm {{ display: none; }}
     }}
   </style>
 </head>
 <body>
-  <header><h1>Webcheck Admin</h1><a class="button" href="/admin/logout">Выйти</a></header>
+  <header>
+    <h1>webcheck <span>/ control</span></h1>
+    <div class="header-tools">
+      <input class="global-search" id="global-search" type="search" placeholder="Поиск на странице">
+      <a class="button" href="/admin/logout">Выйти</a>
+    </div>
+  </header>
   <nav>{nav_html}</nav>
   <main>{body}</main>
+  <script>
+    const search = document.querySelector('#global-search');
+    search?.addEventListener('input', () => {{
+      const query = search.value.trim().toLocaleLowerCase('ru');
+      document.querySelectorAll('tbody tr').forEach((row) => {{
+        row.hidden = query && !row.textContent.toLocaleLowerCase('ru').includes(query);
+      }});
+    }});
+  </script>
 </body>
 </html>"""
     return web.Response(text=html_text, content_type="text/html")
@@ -248,18 +292,25 @@ async def login_page(request: web.Request) -> web.Response:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Вход · Webcheck Admin</title>
   <style>
-    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f6f7f9; color: #1f2933; font: 14px system-ui, sans-serif; }}
-    main {{ width: min(420px, calc(100vw - 32px)); background: #fff; border: 1px solid #d9dee5; border-radius: 8px; padding: 24px; }}
-    h1 {{ margin: 0 0 18px; font-size: 22px; }}
+    :root {{ color-scheme: dark; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: linear-gradient(rgba(184,243,74,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(184,243,74,.025) 1px, transparent 1px), #07110f; background-size: 32px 32px; color: #e8f1eb; font: 14px "Aptos", "Segoe UI", sans-serif; }}
+    main {{ position: relative; width: min(440px, calc(100vw - 32px)); overflow: hidden; background: linear-gradient(145deg, #12231f, #0c1916); border: 1px solid rgba(210,235,222,.14); border-radius: 20px; padding: 30px; box-shadow: 0 30px 90px rgba(0,0,0,.35); }}
+    main::after {{ content: ""; position: absolute; right: -70px; top: -70px; width: 190px; height: 190px; border: 1px solid rgba(184,243,74,.16); border-radius: 50%; box-shadow: inset 0 0 60px rgba(184,243,74,.04); }}
+    h1 {{ position: relative; z-index: 1; margin: 0 0 8px; font: 400 34px/1 Georgia, serif; }}
+    h1 span {{ color: #b8f34a; }}
+    .login-copy {{ margin: 0 0 24px; color: #82978d; }}
     label {{ display: block; margin-bottom: 14px; }}
-    input {{ width: 100%; border: 1px solid #b8c2cc; border-radius: 6px; padding: 10px; font: inherit; }}
-    button {{ width: 100%; border: 0; border-radius: 6px; padding: 10px; background: #176b87; color: #fff; font: inherit; cursor: pointer; }}
-    .flash {{ margin-bottom: 14px; padding: 10px; background: #fdecec; border: 1px solid #f3b7b7; border-radius: 6px; }}
+    input {{ width: 100%; border: 1px solid rgba(210,235,222,.14); border-radius: 10px; padding: 12px; background: #08120f; color: #e8f1eb; font: inherit; outline: 0; }}
+    input:focus {{ border-color: #b8f34a; box-shadow: 0 0 0 3px rgba(184,243,74,.08); }}
+    button {{ width: 100%; border: 0; border-radius: 999px; padding: 12px; background: #b8f34a; color: #13200c; font: inherit; font-weight: 800; cursor: pointer; }}
+    .flash {{ margin-bottom: 14px; padding: 10px; background: rgba(255,107,85,.1); border: 1px solid rgba(255,107,85,.35); border-radius: 8px; color: #ff9b8c; }}
   </style>
 </head>
 <body>
   <main>
-    <h1>Webcheck Admin</h1>
+    <h1>webcheck <span>/ control</span></h1>
+    <p class="login-copy">Защищённый вход в операторскую консоль</p>
     {error_html}
     <form method="post" action="/admin/login">
       <label>Токен администратора<input name="token" type="password" autocomplete="current-password" autofocus></label>
@@ -397,6 +448,7 @@ async def user_detail(request: web.Request) -> web.Response:
     site_rows = "".join(
         f"""<tr>
   <td>{esc(site['url'])}</td>
+  <td>{esc(site['site_group'] or '—')}</td>
   <td>{'<span class="status-bad">пауза</span>' if site['is_paused'] else '<span class="status-ok">активен</span>'}</td>
   <td>{fmt_dt(site['last_checked'])}</td>
   <td>{esc((site['last_status'] or 'нет данных')[:240])}</td>
@@ -406,7 +458,7 @@ async def user_detail(request: web.Request) -> web.Response:
   </td>
 </tr>"""
         for site in sites
-    ) or '<tr><td colspan="5">Сайтов нет</td></tr>'
+    ) or '<tr><td colspan="6">Сайтов нет</td></tr>'
     log_rows = "".join(
         f"<tr><td>{fmt_dt(ts)}</td><td>{esc(username or 'без username')}</td><td>{esc(action)}</td></tr>"
         for ts, _, username, action in logs
@@ -423,7 +475,7 @@ async def user_detail(request: web.Request) -> web.Response:
   </div>
 </div>
 <h2>Сайты</h2>
-<table><thead><tr><th>URL</th><th>Статус</th><th>Проверка</th><th>Последний результат</th><th></th></tr></thead><tbody>{site_rows}</tbody></table>
+<table><thead><tr><th>URL</th><th>Группа</th><th>Статус</th><th>Проверка</th><th>Последний результат</th><th></th></tr></thead><tbody>{site_rows}</tbody></table>
 <h2 style="margin-top:24px">Логи пользователя</h2>
 <table><thead><tr><th>Дата</th><th>Username</th><th>Действие</th></tr></thead><tbody>{log_rows}</tbody></table>"""
     return page(f"Пользователь {user_id}", body, "users")

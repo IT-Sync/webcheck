@@ -7,9 +7,9 @@
   <meta name="theme-color" content="#07110f">
   <meta name="robots" content="noindex, nofollow">
   <title>Webcheck</title>
-  <link rel="stylesheet" href="/app/static/app.css?v=6">
+  <link rel="stylesheet" href="/app/static/app.css?v=7">
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <script src="/app/static/app.js?v=6" defer></script>
+  <script src="/app/static/app.js?v=7" defer></script>
 </head>
 <body>
   <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -119,6 +119,16 @@
       </div>
 
       <div class="resource-controls">
+        <label class="search-control" for="site-search">
+          <span>Поиск</span>
+          <input id="site-search" type="search" placeholder="Домен или группа" autocomplete="off">
+        </label>
+        <label class="group-control" for="group-select">
+          <span>Группа</span>
+          <select id="group-select">
+            <option value="all">Все группы</option>
+          </select>
+        </label>
         <div class="filter-state">
           <span id="filter-label">Все ресурсы</span>
           <b id="visible-count">0 из 0</b>
@@ -170,9 +180,26 @@
         <span>https://</span>
         <input id="site-url" name="url" inputmode="url" autocomplete="url" placeholder="example.com" required>
       </div>
+      <label for="site-group">Группа <small>необязательно</small></label>
+      <div class="plain-field">
+        <input id="site-group" name="site_group" maxlength="40" autocomplete="off" placeholder="Например, Production">
+      </div>
       <p class="form-error hidden" id="form-error"></p>
       <button class="submit-button" id="add-submit" type="submit">Добавить в мониторинг</button>
     </form>
+  </dialog>
+
+  <dialog id="history-dialog" class="history-dialog">
+    <section class="history-card">
+      <button class="dialog-close" id="close-history" aria-label="Закрыть" type="button">×</button>
+      <p class="eyebrow">RESOURCE HISTORY / 7 DAYS</p>
+      <h2 id="history-title">История ресурса</h2>
+      <div class="history-summary" id="history-summary"></div>
+      <div class="history-chart" id="history-chart" aria-label="Доступность по часам"></div>
+      <div class="history-regions" id="history-regions"></div>
+      <h3>События</h3>
+      <div class="history-events" id="history-events"></div>
+    </section>
   </dialog>
 
   <template id="site-template">
@@ -183,6 +210,7 @@
           <div>
             <span class="status-badge"><i></i><b></b></span>
             <h3 class="site-host"></h3>
+            <span class="site-group hidden"></span>
           </div>
           <button class="more-button" type="button" aria-label="Показать действия">•••</button>
         </div>
@@ -193,7 +221,9 @@
         </div>
         <pre class="site-details"></pre>
         <div class="site-actions hidden">
+          <button data-action="history" type="button">История</button>
           <button data-action="check" type="button">Проверить сейчас</button>
+          <button data-action="group" type="button">Изменить группу</button>
           <button data-action="toggle" type="button"></button>
           <button class="danger-action" data-action="delete" type="button">Удалить</button>
         </div>

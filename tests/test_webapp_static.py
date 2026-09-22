@@ -19,8 +19,8 @@ class WebAppStaticMarkupTest(unittest.TestCase):
     def test_frontend_assets_have_cache_busting_version(self):
         source = INDEX.read_text(encoding="utf-8")
 
-        self.assertIn("/app/static/app.css?v=6", source)
-        self.assertIn("/app/static/app.js?v=6", source)
+        self.assertIn("/app/static/app.css?v=7", source)
+        self.assertIn("/app/static/app.js?v=7", source)
 
     def test_status_metrics_are_filter_controls(self):
         source = INDEX.read_text(encoding="utf-8")
@@ -28,6 +28,15 @@ class WebAppStaticMarkupTest(unittest.TestCase):
         self.assertIn('data-filter="attention"', source)
         self.assertIn('id="sort-select"', source)
         self.assertIn('value="priority"', source)
+        self.assertIn('id="site-search"', source)
+        self.assertIn('id="group-select"', source)
+
+    def test_history_dialog_and_actions_are_available(self):
+        markup = INDEX.read_text(encoding="utf-8")
+
+        self.assertIn('id="history-dialog"', markup)
+        self.assertIn('data-action="history"', markup)
+        self.assertIn('data-action="group"', markup)
 
     def test_direct_access_uses_a_separate_placeholder(self):
         markup = INDEX.read_text(encoding="utf-8")

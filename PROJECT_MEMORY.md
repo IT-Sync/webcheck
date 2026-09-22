@@ -28,7 +28,10 @@ Current behavior:
 - validates signed Telegram `initData` on every API request;
 - verifies site ownership for every mutation;
 - supports add, delete, pause, resume, and manual check operations;
-- provides status-counter filters and problem-first, name, or recent sorting;
+- provides status-counter filters, domain/group search, group filtering, and
+  problem-first, name, or recent sorting;
+- supports optional resource groups and a seven-day history view backed by raw
+  and hourly aggregated agent results plus relevant monitoring events;
 - renders session-cached site data immediately and refreshes it from the server;
 - supports closing the add dialog through its close control, Telegram Back,
   Escape, and backdrop interaction where the web view supports it;
@@ -40,6 +43,20 @@ Current behavior:
 
 Static asset URLs are versioned, and the Mini App shell is served with no-cache
 headers to reduce stale Telegram web-view assets after deployment.
+
+## Data Retention
+
+The application includes an opt-in hourly maintenance job. It archives expired
+`agent_check_results` into `agent_check_hourly` and deletes raw rows in bounded,
+transactional batches using a dedicated database connection. Default retention
+is seven days for raw agent results, 90 days for user and bot logs, and 365 days
+for events. The interval is configurable and completion logs include deleted
+row counts and duration. `DB_MAINTENANCE_ENABLED` defaults to `0`; production
+must back up the database, deploy the additive schema, and then enable cleanup
+deliberately.
+
+The administrative console uses the same dark control-room visual language as
+the Mini App and provides page-level table search.
 
 ## Production Deployment
 
@@ -72,8 +89,8 @@ migrations. Back up PostgreSQL before major releases.
 
 ## Planned Development
 
-The product backlog in `TODO.md` covers resource history and charts, groups and
-search, maintenance windows, regional comparisons, monitoring health, incident
+The product backlog in `TODO.md` covers longer-period charts, tags, maintenance
+windows, regional comparisons, monitoring health, incident
 confirmation and acknowledgement, notification preferences, bulk operations,
 public status pages, content/API checks, DNS changes, and team access. These
 features are not yet implemented. The proposed sequence starts with retention
@@ -81,7 +98,7 @@ and aggregation before history, groups, maintenance, and public status pages.
 
 ## Validation Baseline
 
-The current suite contains 29 passing `unittest` tests. Standard validation is:
+The current suite contains 33 passing `unittest` tests. Standard validation is:
 
 ```bash
 python -m unittest discover -s tests -v

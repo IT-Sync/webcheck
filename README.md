@@ -20,6 +20,8 @@ remain compatible.
   management, status filters, and problem-first sorting.
 - Fast Mini App startup from a session cache while current data loads in the
   background.
+- Resource groups, search, group filtering, and a seven-day history view with
+  regional availability, response-time summaries, and monitoring events.
 - Bounded DNS validation when a site is added, including rejection of private,
   loopback, link-local, and other non-public targets.
 - Administrative console with user, site, event, message, and agent management.
@@ -95,6 +97,15 @@ WEB_APP_MAX_SITES_PER_USER=50
 WEB_APP_DNS_TIMEOUT_SECONDS=3
 WEB_APP_CHECK_TIMEOUT_SECONDS=10
 WEB_APP_AGENT_TIMEOUT_SECONDS=5
+
+DB_MAINTENANCE_ENABLED=0
+AGENT_RESULT_RETENTION_DAYS=7
+USER_LOG_RETENTION_DAYS=90
+BOT_MESSAGE_RETENTION_DAYS=90
+EVENT_RETENTION_DAYS=365
+DB_CLEANUP_BATCH_SIZE=5000
+DB_CLEANUP_MAX_BATCHES=10
+DB_MAINTENANCE_INTERVAL_HOURS=1
 
 AGENT_WS_TOKEN=replace_with_a_separate_agent_token
 AGENT_WS_HOST=0.0.0.0
@@ -214,6 +225,12 @@ Resource metrics are interactive filters. The default sort order places DOWN,
 warning, and pending resources before healthy and paused resources. Users can
 also sort by name or most recent check.
 
+Users can assign a resource to a group, search by domain or group, and filter the
+list by group. The resource history action shows the last seven days of
+availability and response-time aggregates by remote agent together with relevant
+monitoring events. Existing sites start with no group and require no data
+migration by operators.
+
 Adding a site validates DNS but does not perform a full HTTP/TLS/WHOIS check in
 the request path. DNS work has a configurable timeout, and blocking DNS and TLS
 operations run outside the asyncio event loop. The first complete result is
@@ -239,6 +256,53 @@ docker compose logs -f webcheck-agent
 ```
 
 See [agent/README.md](agent/README.md) for its configuration and protocol.
+
+## Database Retention and Aggregation
+
+Raw remote-agent results grow by one row per site, online agent, and monitoring
+cycle. The maintenance job archives expired raw results into hourly aggregates
+before deleting them. History reads combine retained raw rows with aggregates,
+so cleanup does not remove chart history.
+
+Maintenance runs hourly in bounded batches and uses a dedicated PostgreSQL
+connection outside the asyncio event loop. It is disabled by default for a safe
+first deployment. Recommended production settings are:
+
+```env
+DB_MAINTENANCE_ENABLED=1
+AGENT_RESULT_RETENTION_DAYS=7
+USER_LOG_RETENTION_DAYS=90
+BOT_MESSAGE_RETENTION_DAYS=90
+EVENT_RETENTION_DAYS=365
+DB_CLEANUP_BATCH_SIZE=5000
+DB_CLEANUP_MAX_BATCHES=10
+DB_MAINTENANCE_INTERVAL_HOURS=1
+```
+
+For the first rollout:
+
+1. Back up PostgreSQL.
+2. Deploy with `DB_MAINTENANCE_ENABLED=0` and confirm that startup creates
+   `agent_check_hourly` and the additive site fields.
+3. Create the cleanup index online, without blocking normal writes for the full
+   build duration:
+
+   ```bash
+   docker compose exec -T db psql -U devuser -d devcheck -c \
+     "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agent_check_results_created_at ON agent_check_results(created_at);"
+   ```
+
+4. Enable maintenance and restart only `devcheck-bot`.
+5. Watch for `Database maintenance completed` in application logs and monitor
+   the row count of `agent_check_results`.
+
+Each batch archives and deletes rows in one transaction. Cleanup never deletes
+the `sites` table. Normal PostgreSQL autovacuum makes deleted space reusable;
+database files do not necessarily shrink immediately.
+
+Maintenance refuses to run without `idx_agent_check_results_created_at`. The
+large index is deliberately not built during application startup because the
+existing production table may contain millions of rows.
 
 ## Safe In-place Update
 

@@ -13,7 +13,7 @@
 
   appShell.hidden = false;
   document.body.classList.add("telegram-access");
-  const state = { sites: [], user: null, limit: 0, loaded: false, filter: "all", sort: "priority" };
+  const state = { sites: [], user: null, limit: 0, loaded: false, filter: "all", sort: "priority", query: "", group: "all" };
   const elements = {
     list: document.querySelector("#site-list"),
     empty: document.querySelector("#empty-state"),
@@ -22,6 +22,7 @@
     dialog: document.querySelector("#add-dialog"),
     form: document.querySelector("#add-form"),
     input: document.querySelector("#site-url"),
+    groupInput: document.querySelector("#site-group"),
     formError: document.querySelector("#form-error"),
     submit: document.querySelector("#add-submit"),
     template: document.querySelector("#site-template"),
@@ -30,7 +31,16 @@
     filterLabel: document.querySelector("#filter-label"),
     visibleCount: document.querySelector("#visible-count"),
     sort: document.querySelector("#sort-select"),
+    search: document.querySelector("#site-search"),
+    group: document.querySelector("#group-select"),
     monitorSection: document.querySelector("#monitor-section"),
+    historyDialog: document.querySelector("#history-dialog"),
+    historyTitle: document.querySelector("#history-title"),
+    historySummary: document.querySelector("#history-summary"),
+    historyChart: document.querySelector("#history-chart"),
+    historyRegions: document.querySelector("#history-regions"),
+    historyEvents: document.querySelector("#history-events"),
+    closeHistory: document.querySelector("#close-history"),
     metrics: [...document.querySelectorAll(".metric[data-filter]")],
   };
 
@@ -113,10 +123,13 @@
 
   function visibleSites() {
     const filtered = state.sites.filter((site) => {
-      if (state.filter === "all") return true;
-      if (state.filter === "attention") return ["down", "warning"].includes(site.status_kind);
-      if (state.filter === "paused") return site.is_paused;
-      return site.status_kind === state.filter;
+      const statusMatches = state.filter === "all"
+        || (state.filter === "attention" && ["down", "warning"].includes(site.status_kind))
+        || (state.filter === "paused" && site.is_paused)
+        || site.status_kind === state.filter;
+      const groupMatches = state.group === "all" || (site.site_group || "") === state.group;
+      const haystack = `${site.url} ${site.site_group || ""}`.toLocaleLowerCase("ru");
+      return statusMatches && groupMatches && haystack.includes(state.query);
     });
     const priority = { down: 0, warning: 1, pending: 2, up: 3, paused: 4 };
     return filtered.sort((left, right) => {
@@ -146,6 +159,11 @@
     card.querySelector(".latency").textContent = latencyFromStatus(site.last_status);
     card.querySelector(".site-details").textContent = site.last_status || "Первый замер будет выполнен по расписанию или вручную.";
     card.querySelector(".status-badge b").textContent = statusLabel(site);
+    const groupBadge = card.querySelector(".site-group");
+    if (site.site_group) {
+      groupBadge.textContent = site.site_group;
+      groupBadge.classList.remove("hidden");
+    }
 
     const actions = card.querySelector(".site-actions");
     const more = card.querySelector(".more-button");
@@ -163,6 +181,14 @@
       const button = event.target.closest("button[data-action]");
       if (!button) return;
       const action = button.dataset.action;
+      if (action === "history") {
+        await openHistory(site);
+        return;
+      }
+      if (action === "group") {
+        await changeGroup(site);
+        return;
+      }
       if (action === "delete") {
         const confirmed = await confirmDelete(hostFromUrl(site.url));
         if (!confirmed) return;
@@ -181,7 +207,20 @@
     elements.filterEmpty.classList.toggle("hidden", !hasSites || sites.length !== 0);
     elements.visibleCount.textContent = `${sites.length} из ${state.sites.length}`;
     elements.filterLabel.textContent = ({ all: "Все ресурсы", up: "Ресурсы в сети", attention: "Требуют внимания", paused: "Мониторинг на паузе" })[state.filter];
+    renderGroups();
     updateMetrics();
+  }
+
+  function renderGroups() {
+    const selected = state.group;
+    const groups = [...new Set(state.sites.map((site) => site.site_group).filter(Boolean))]
+      .sort((left, right) => left.localeCompare(right, "ru"));
+    elements.group.replaceChildren(
+      new Option("Все группы", "all"),
+      ...groups.map((group) => new Option(group, group)),
+    );
+    state.group = groups.includes(selected) ? selected : "all";
+    elements.group.value = state.group;
   }
 
   function setFilter(filter, { scroll = true } = {}) {
@@ -259,9 +298,113 @@
     }
   }
 
+  async function changeGroup(site) {
+    const value = window.prompt("Название группы (пустое значение уберёт группу):", site.site_group || "");
+    if (value === null) return;
+    try {
+      const payload = await api(`/api/webapp/sites/${site.id}/group`, {
+        method: "POST",
+        body: JSON.stringify({ site_group: value }),
+      });
+      state.sites = state.sites.map((item) => item.id === site.id ? payload.site : item);
+      render();
+      haptic("medium");
+    } catch (error) {
+      showNotice(error.message);
+    }
+  }
+
+  function closeHistory() {
+    if (elements.historyDialog.open) elements.historyDialog.close();
+  }
+
+  async function openHistory(site) {
+    elements.historyTitle.textContent = hostFromUrl(site.url);
+    elements.historySummary.innerHTML = '<div class="history-empty">Загружаем историю…</div>';
+    elements.historyChart.replaceChildren();
+    elements.historyRegions.replaceChildren();
+    elements.historyEvents.replaceChildren();
+    elements.historyDialog.showModal();
+    document.body.classList.add("dialog-open");
+    telegram?.BackButton?.show();
+    try {
+      const payload = await api(`/api/webapp/sites/${site.id}/history?days=7`, { timeoutMs: 15000 });
+      renderHistory(payload.history);
+    } catch (error) {
+      elements.historySummary.innerHTML = "";
+      const empty = document.createElement("div");
+      empty.className = "history-empty";
+      empty.textContent = error.message;
+      elements.historySummary.append(empty);
+    }
+  }
+
+  function renderHistory(history) {
+    const summaryItems = [
+      [history.summary.availability == null ? "—" : `${history.summary.availability}%`, "Доступность"],
+      [history.summary.avg_latency_ms == null ? "—" : `${history.summary.avg_latency_ms} мс`, "Средняя задержка"],
+      [String(history.summary.events), "События"],
+    ];
+    elements.historySummary.replaceChildren(...summaryItems.map(([value, label]) => {
+      const item = document.createElement("div");
+      item.className = "history-metric";
+      const strong = document.createElement("b");
+      const caption = document.createElement("span");
+      strong.textContent = value;
+      caption.textContent = label;
+      item.append(strong, caption);
+      return item;
+    }));
+
+    const hourly = new Map();
+    const regions = new Map();
+    history.points.forEach((point) => {
+      const bucket = hourly.get(point.bucket_start) || { checks: 0, successful: 0 };
+      bucket.checks += point.checks;
+      bucket.successful += point.successful_checks;
+      hourly.set(point.bucket_start, bucket);
+      const region = regions.get(point.agent_id) || { checks: 0, successful: 0, label: [point.country, point.region].filter(Boolean).join(" · ") || point.agent_id };
+      region.checks += point.checks;
+      region.successful += point.successful_checks;
+      regions.set(point.agent_id, region);
+    });
+    const bars = [...hourly.entries()].slice(-168).map(([bucket, point]) => {
+      const availability = point.checks ? point.successful * 100 / point.checks : 0;
+      const bar = document.createElement("span");
+      bar.className = `history-bar ${availability < 90 ? "down" : availability < 100 ? "warning" : ""}`;
+      bar.style.height = `${Math.max(4, availability)}%`;
+      bar.title = `${new Date(bucket).toLocaleString("ru-RU")}: ${availability.toFixed(1)}%`;
+      return bar;
+    });
+    elements.historyChart.replaceChildren(...bars);
+    if (!bars.length) elements.historyChart.innerHTML = '<div class="history-empty">Агрегированных замеров пока нет</div>';
+
+    elements.historyRegions.replaceChildren(...[...regions.values()].map((region) => {
+      const chip = document.createElement("span");
+      chip.className = "region-chip";
+      const availability = region.checks ? region.successful * 100 / region.checks : 0;
+      chip.textContent = `${region.label} · ${availability.toFixed(1)}%`;
+      return chip;
+    }));
+
+    const events = history.events.map((event) => {
+      const row = document.createElement("article");
+      row.className = "history-event";
+      const time = document.createElement("time");
+      const text = document.createElement("p");
+      time.textContent = new Date(event.created_at).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+      text.textContent = event.message;
+      row.append(time, text);
+      return row;
+    });
+    elements.historyEvents.replaceChildren(...events);
+    if (!events.length) elements.historyEvents.innerHTML = '<div class="history-empty">За период событий не было</div>';
+  }
+
   function openAdd() {
     elements.formError.classList.add("hidden");
     elements.input.value = "";
+    elements.groupInput.value = "";
     elements.dialog.showModal();
     document.body.classList.add("dialog-open");
     telegram?.BackButton?.show();
@@ -294,7 +437,7 @@
     try {
       const payload = await api("/api/webapp/sites", {
         method: "POST",
-        body: JSON.stringify({ url: elements.input.value }),
+        body: JSON.stringify({ url: elements.input.value, site_group: elements.groupInput.value }),
         timeoutMs: 8000,
       });
       state.sites.push(payload.site);
@@ -338,6 +481,14 @@
     render();
     haptic();
   });
+  elements.search.addEventListener("input", () => {
+    state.query = elements.search.value.trim().toLocaleLowerCase("ru");
+    render();
+  });
+  elements.group.addEventListener("change", () => {
+    state.group = elements.group.value;
+    render();
+  });
   elements.closeAdd.addEventListener("click", (event) => {
     event.preventDefault();
     closeAdd();
@@ -351,7 +502,17 @@
   elements.dialog.addEventListener("click", (event) => {
     if (event.target === elements.dialog) closeAdd();
   });
+  elements.closeHistory.addEventListener("click", closeHistory);
+  elements.historyDialog.addEventListener("close", cleanupAddDialog);
+  elements.historyDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeHistory();
+  });
+  elements.historyDialog.addEventListener("click", (event) => {
+    if (event.target === elements.historyDialog) closeHistory();
+  });
   telegram?.BackButton?.onClick(closeAdd);
+  telegram?.BackButton?.onClick(closeHistory);
 
   telegram?.ready();
   telegram?.expand();

@@ -14,9 +14,11 @@ from bot.infra.db import (
     delete_site_by_id,
     get_site_by_url_for_user,
     get_site_for_user,
+    get_site_history_for_user,
     get_sites_with_pause,
     log_user_action,
     set_site_paused_by_id,
+    set_site_group_by_id,
     update_site_status_by_id,
 )
 from bot.webapp.auth import TelegramAuthError, validate_init_data
@@ -91,7 +93,19 @@ def _site_payload(row: tuple) -> dict:
         "last_checked": _iso(row[5]),
         "is_paused": paused,
         "status_kind": _status_kind(row[4], paused),
+        "site_group": row[7] if len(row) > 7 else "",
     }
+
+
+def _clean_group(value) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError("Группа должна быть строкой")
+    group = " ".join(value.strip().split())
+    if len(group) > 40:
+        raise ValueError("Название группы не должно превышать 40 символов")
+    return group
 
 
 def _site_payload_for_user(site_id: int, user_id: int) -> dict | None:
@@ -118,6 +132,7 @@ async def bootstrap(request: web.Request) -> web.Response:
     user = request["telegram_user"]
     rows = get_sites_with_pause(user.id)
     sites = [_site_payload(row) for row in rows]
+    groups = sorted({site["site_group"] for site in sites if site["site_group"]}, key=str.casefold)
     metrics = {
         "total": len(sites),
         "up": sum(site["status_kind"] == "up" for site in sites),
@@ -134,6 +149,7 @@ async def bootstrap(request: web.Request) -> web.Response:
                 "last_name": user.last_name,
             },
             "sites": sites,
+            "groups": groups,
             "metrics": metrics,
             "limits": {"sites": WEB_APP_MAX_SITES_PER_USER},
         }
@@ -164,12 +180,16 @@ async def create_site(request: web.Request) -> web.Response:
         )
     except TargetValidationError as exc:
         return _json_error(str(exc), code="invalid_target")
+    try:
+        site_group = _clean_group(data.get("site_group", ""))
+    except ValueError as exc:
+        return _json_error(str(exc), code="invalid_group")
 
     existing = get_site_by_url_for_user(user.id, url)
     if existing:
         return _json_error("Этот сайт уже добавлен", status=409, code="duplicate")
 
-    site_id = add_site(user.id, url, user.username)
+    site_id = add_site(user.id, url, user.username, site_group)
     log_user_action(user.id, f"Mini App: added site {url}", user.username)
     site = _site_payload_for_user(site_id, user.id)
     return web.json_response({"ok": True, "site": site}, status=201)
@@ -215,6 +235,42 @@ async def delete_site(request: web.Request) -> web.Response:
     delete_site_by_id(site[0], user.id)
     log_user_action(user.id, f"Mini App: deleted site {site[3]}", user.username)
     return web.json_response({"ok": True})
+
+
+@require_telegram_user
+async def update_site_group(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    site = _owned_site(request)
+    if not site:
+        return _json_error("Сайт не найден", status=404, code="not_found")
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise ValueError("Ожидался JSON-объект")
+        site_group = _clean_group(data.get("site_group", ""))
+    except (ValueError, TypeError, AttributeError) as exc:
+        return _json_error(str(exc), code="invalid_group")
+    set_site_group_by_id(site[0], user.id, site_group)
+    log_user_action(user.id, f"Mini App: changed group for {site[3]} to {site_group or 'none'}", user.username)
+    return web.json_response({"ok": True, "site": _site_payload_for_user(site[0], user.id)})
+
+
+@require_telegram_user
+async def site_history(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    try:
+        site_id = int(request.match_info["site_id"])
+        days = int(request.query.get("days", "7"))
+    except (KeyError, ValueError):
+        return _json_error("Некорректный период", code="invalid_period")
+    history = get_site_history_for_user(site_id, user.id, days=days)
+    if history is None:
+        return _json_error("Сайт не найден", status=404, code="not_found")
+    for point in history["points"]:
+        point["bucket_start"] = _iso(point["bucket_start"])
+    for event in history["events"]:
+        event["created_at"] = _iso(event["created_at"])
+    return web.json_response({"ok": True, "history": history})
 
 
 @require_telegram_user
@@ -274,4 +330,6 @@ def setup_webapp_routes(app: web.Application) -> None:
     app.router.add_post("/api/webapp/sites/{site_id:\\d+}/check", check_site)
     app.router.add_post("/api/webapp/sites/{site_id:\\d+}/pause", pause_site)
     app.router.add_post("/api/webapp/sites/{site_id:\\d+}/resume", resume_site)
+    app.router.add_post("/api/webapp/sites/{site_id:\\d+}/group", update_site_group)
+    app.router.add_get("/api/webapp/sites/{site_id:\\d+}/history", site_history)
     app.router.add_delete("/api/webapp/sites/{site_id:\\d+}", delete_site)
