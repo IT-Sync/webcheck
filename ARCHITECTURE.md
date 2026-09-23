@@ -46,8 +46,11 @@ published on a private address reachable from Nginx and protected by a firewall.
 - `bot/checks/` owns central HTTP, TLS, WHOIS, GeoIP, and subdomain checks.
 - `bot/checks/service.py` provides the shared resource-check service used by UI
   and scheduler flows.
-- `bot/infra/db.py` owns the synchronous PostgreSQL access layer, schema setup,
-  and additive startup migrations.
+- `bot/infra/repository.py` owns the bounded, thread-safe psycopg2 connection
+  pool and explicit transaction context.
+- `bot/infra/db.py` retains the public persistence function signatures, schema
+  setup, and additive startup migrations while routing compatibility
+  cursor/connection operations through the repository.
 - `bot/core/` contains URL helpers and formatters that do not depend on Telegram
   or PostgreSQL.
 - `agent/` is a separately deployable remote checker.
@@ -195,7 +198,7 @@ feedback.
 job selects expired rows in bounded batches, aggregates each batch into
 `agent_check_hourly`, and deletes the selected rows in the same transaction.
 The job uses its own PostgreSQL connection and runs through `asyncio.to_thread`
-so maintenance does not share the global application cursor or block the event
+so maintenance does not consume application pool capacity or block the event
 loop. Retention is opt-in through `DB_MAINTENANCE_ENABLED`; the maintenance
 interval is configurable and current defaults keep seven days of raw agent
 results, 90 days of user and bot logs, and 365 days of events. Cleanup requires
@@ -205,11 +208,14 @@ startup transaction. The guard checks PostgreSQL's `indisready` and `indisvalid`
 flags because an interrupted concurrent build may leave an unusable catalog
 entry with the expected index name.
 
-The primary architectural constraint is the process-wide synchronous psycopg2
-connection and cursor. Database calls can block the event loop and concurrent
-cursor use is unsafe. A future repository/pool migration should preserve public
-function signatures and be rolled out separately from schema or protocol
-changes. Its status is tracked in `TODO.md`.
+The central application uses a bounded `ThreadedConnectionPool`. Legacy
+`bot.infra.db` functions and signatures are preserved by compatibility
+connection/cursor facades; each worker thread checks out its own connection,
+read transactions are released after fetch, and write transactions retain the
+same connection through commit or rollback. Pool exhaustion waits for a returned
+connection rather than sharing a cursor. The database API is still synchronous,
+so calls made directly from async handlers can block the event loop; moving
+those calls off-loop remains a separate incremental migration.
 
 ## Architecture Maintenance
 

@@ -1,19 +1,14 @@
-import psycopg2
-import os
 from datetime import datetime, timedelta
 import csv
 import json
 from psycopg2.extras import Json
 
+from bot.infra.repository import get_repository
+
 UNSET = object()
 
-conn = psycopg2.connect(
-    dbname=os.getenv("DB_NAME", "devcheck"),
-    user=os.getenv("DB_USER", "user"),
-    password=os.getenv("DB_PASS", "password"),
-    host=os.getenv("DB_HOST", "localhost"),
-    port=os.getenv("DB_PORT", "5432")
-)
+repository = get_repository()
+conn = repository.connection_facade()
 c = conn.cursor()
 
 # Таблицы

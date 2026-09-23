@@ -87,6 +87,8 @@ DB_USER=devuser
 DB_PASS=replace_with_database_password
 DB_HOST=db
 DB_PORT=5432
+DB_POOL_MIN_SIZE=1
+DB_POOL_MAX_SIZE=10
 
 ADMIN_WEB_TOKEN=replace_with_a_long_random_token
 ADMIN_WEB_HOST=0.0.0.0
@@ -119,6 +121,12 @@ AGENT_WS_PUBLISH_HOST=0.0.0.0
 `WEB_APP_URL` must be the public HTTPS URL ending in `/app/`. At startup the bot
 sets this URL as its Telegram menu button; `/start` and `/app` also provide a
 button that opens the Mini App.
+
+The central database repository uses a thread-safe psycopg2 connection pool.
+`DB_POOL_MIN_SIZE` connections are opened at startup. Concurrent worker threads
+wait when all `DB_POOL_MAX_SIZE` connections are checked out instead of sharing
+a cursor or failing immediately. Size the maximum for the PostgreSQL connection
+budget shared with maintenance and operator tools.
 
 Never commit `.env`, Telegram tokens, web tokens, database dumps, or `pgdata/`.
 
@@ -385,6 +393,14 @@ Run the automated checks:
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall -q bot agent tests
+```
+
+PostgreSQL integration tests are opt-in so the default suite never modifies an
+operator database. Point `TEST_DATABASE_URL` at a disposable database:
+
+```bash
+TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/webcheck_test \
+  python -m unittest -v tests.test_repository_postgres
 ```
 
 More detail is available in [ARCHITECTURE.md](ARCHITECTURE.md) and

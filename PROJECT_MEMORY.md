@@ -1,6 +1,6 @@
 # Project Memory
 
-Last updated: 2026-09-22
+Last updated: 2026-09-23
 
 ## Current State
 
@@ -15,7 +15,8 @@ The central Python 3.11 process currently provides:
 - an aiohttp administrative console;
 - a Telegram Mini App and authenticated JSON API;
 - a WebSocket server for remote checking agents;
-- PostgreSQL persistence through a synchronous psycopg2 access layer.
+- PostgreSQL persistence through a synchronous repository layer backed by a
+  thread-safe psycopg2 connection pool.
 
 ## Telegram Mini App
 
@@ -70,6 +71,19 @@ stored as Telegram file identifiers rather than database blobs. The bot notifies
 `BOT_OWNER_ID`, while `/admin/feedback` provides an unread inbox, protected
 attachment viewing, complete conversation history, and replies delivered from
 the bot.
+
+## Database Access
+
+`bot.infra.repository.DatabaseRepository` owns a bounded, thread-safe psycopg2
+connection pool. Existing functions in `bot.infra.db` retain their signatures
+through compatibility cursor and connection facades while each worker thread
+checks out an independent connection. Reads release their connection after
+fetching; writes retain it until commit or rollback. `DB_POOL_MIN_SIZE` defaults
+to one and `DB_POOL_MAX_SIZE` to ten. The access layer remains synchronous, so
+database calls made directly from async handlers can still block the event loop.
+
+Disposable PostgreSQL integration tests cover commit, rollback, and concurrent
+pool use when `TEST_DATABASE_URL` is set.
 
 ## Data Retention
 
@@ -133,10 +147,14 @@ is longer-period analytics, maintenance windows, and public status pages.
 
 ## Validation Baseline
 
-The current suite contains 48 passing `unittest` tests. Standard validation is:
+The current suite contains 59 `unittest` tests. The standard run passes 55 and
+skips four PostgreSQL integration tests unless `TEST_DATABASE_URL` points to a
+disposable database; all 59 pass when that database is provided.
 
 ```bash
 python -m unittest discover -s tests -v
+TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/webcheck_test \
+  python -m unittest -v tests.test_repository_postgres
 python -m compileall -q bot agent tests
 git diff --check
 ```

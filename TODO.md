@@ -1,17 +1,10 @@
 # TODO
 
-Last updated: 2026-09-22
+Last updated: 2026-09-23
 
 This file tracks unresolved work and technical debt. Completed work should be
 removed or moved into the current-state sections of `PROJECT_MEMORY.md`; it
 should not become a chronological changelog.
-
-## High Priority
-
-- Replace the process-wide synchronous psycopg2 connection and cursor with a
-  repository layer backed by a connection pool. Preserve current public
-  function signatures during incremental migration and add PostgreSQL
-  integration tests first.
 
 ## Medium Priority
 
@@ -22,8 +15,9 @@ should not become a chronological changelog.
 - Replace the raw admin-token cookie with a short-lived signed session, set
   secure cookie attributes, and add CSRF protection while retaining a compatible
   operator login path for one release.
-- Add disposable PostgreSQL and aiohttp integration tests covering Mini App
-  ownership checks, startup against old and current schemas, scheduler behavior,
+- Expand disposable PostgreSQL and aiohttp integration tests beyond repository
+  transaction and pool coverage to include Mini App ownership checks, startup
+  against old and current schemas, scheduler behavior,
   notification deduplication, feedback persistence, media proxying, album
   capture and reply delivery, retention boundaries and rollback, aggregation,
   and WebSocket-agent timeouts.
