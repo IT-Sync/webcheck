@@ -230,8 +230,14 @@ every existing site owner and attaches legacy sites without changing their
 `sites.user_id` or deleting data. Owners manage members; managers may add, check,
 pause, tag, schedule maintenance for, and delete project resources; viewers see
 status and history only. The owner remains the alert recipient. Personal projects
-can also be shared. Site and project APIs verify the signed Telegram identity;
-client-side role controls are only a convenience. The resource list is cached
+can also be shared. An owner chooses a role and generates a one-use Telegram
+invitation link in the Projects dialog; the link expires after seven days. The
+invitee opens it in the bot and joins under their own Telegram identity. The
+owner can revoke pending links and change roles of existing members. The link
+secret is shown only when created and
+only its hash is stored. Direct member assignment by Telegram ID is not exposed.
+Site and project APIs verify the signed Telegram identity; client-side role
+controls are only a convenience. The resource list is cached
 only in Telegram's current web view session and refreshed on every opening.
 
 Opening `/app/` in a regular browser shows a branded Telegram access page rather
@@ -390,7 +396,7 @@ After deployment, fully close and reopen the Telegram Mini App, then verify:
 3. The add dialog closes using its close button, Telegram Back, Escape, and a
    backdrop tap where supported.
 4. Adding a temporary public domain completes within the configured DNS timeout.
-5. Existing sites appear in Personal; a viewer cannot mutate them, a manager can, and only the owner can change project members.
+5. Existing sites appear in Personal. Create an invitation, open it as another Telegram user, verify the assigned role, one-time use, expiry, and owner-only revocation.
 6. Feedback closes the Mini App, captures text and attachments in the bot,
    displays them under `/admin/feedback`, and delivers an administrator reply.
 7. Bot polling, scheduled monitoring, admin console, and remote agents continue

@@ -54,9 +54,13 @@ headers to reduce stale Telegram web-view assets after deployment.
 ## Team Access
 
 Existing resources are backfilled into a personal project owned by their original
-`sites.user_id`. Owners can create additional projects and assign Telegram IDs as
-viewers or managers in the Mini App. A viewer sees statuses and history; a manager
-may manage project sites and maintenance; only the owner changes membership.
+`sites.user_id`. Owners can create additional projects and issue one-use,
+seven-day Telegram invitation links for viewer or manager access. The invitee
+joins via the bot `/start` deep link; pending links can be revoked, token hashes
+are stored rather than secrets, and direct member assignment by ID is no longer
+exposed; owners can still edit existing members' roles from the roster. The Mini App filter controls wrap into legible rows at tablet/mobile
+widths. A viewer sees statuses and history; a manager may manage project sites
+and maintenance; only the owner changes membership.
 Monitoring alerts and scheduled reports still go to the site owner. Removing a
 user with a shared owned project is refused rather than deleting team resources.
 

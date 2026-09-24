@@ -156,16 +156,22 @@ code { font-family: "Courier New", monospace; }
 .add-button { padding: 11px 15px; }
 .add-button span { display: inline-block; margin-right: 5px; font-size: 20px; line-height: 10px; vertical-align: -1px; }
 
-.resource-controls { display: grid; grid-template-columns: minmax(150px, 1.2fr) repeat(3, minmax(95px, .65fr)) auto minmax(150px, 1fr); align-items: end; gap: 12px; margin: -2px 0 15px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: rgba(8, 18, 15, 0.62); }
+.resource-controls { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr)); grid-template-areas: "search project group tag" "count count sort sort"; align-items: end; gap: 12px; margin: -2px 0 15px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(8, 18, 15, 0.62); }
+.search-control { grid-area: search; }
+.project-control { grid-area: project; }
+.group-control { grid-area: group; }
+.tag-control { grid-area: tag; }
+.filter-state { grid-area: count; }
+.sort-control { grid-area: sort; }
 .filter-state { display: grid; gap: 4px; min-width: 0; }
 .filter-state span { overflow: hidden; color: var(--paper); font: 600 12px/1.2 Georgia, serif; text-overflow: ellipsis; white-space: nowrap; }
 .filter-state b, .sort-control > span, .search-control > span, .group-control > span, .tag-control > span, .project-control > span { color: var(--muted); font: 700 9px/1 "Courier New", monospace; letter-spacing: 0.1em; text-transform: uppercase; }
 .search-control, .group-control, .tag-control, .project-control { display: grid; gap: 5px; min-width: 0; }
 .search-control input, .group-control select, .tag-control select, .project-control select { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: #0b1714; color: var(--paper); font-size: 11px; }
 .search-control input:focus, .group-control select:focus, .tag-control select:focus, .project-control select:focus { border-color: var(--acid); }
-.sort-control { display: grid; gap: 5px; min-width: 168px; }
-.sort-control > span { text-align: right; }
-.sort-control select { width: 100%; padding: 7px 28px 7px 9px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: #0b1714; color: var(--paper); font-size: 11px; }
+.sort-control { display: grid; gap: 5px; min-width: 0; }
+.sort-control > span { text-align: left; }
+.sort-control select { width: 100%; min-width: 0; padding: 8px 28px 8px 10px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: #0b1714; color: var(--paper); font-size: 11px; }
 .sort-control select:focus { border-color: var(--acid); }
 
 .site-list { display: grid; gap: 12px; }
@@ -177,7 +183,7 @@ code { font-family: "Courier New", monospace; }
 .site-card[data-status="paused"] .status-rail { background: #65736c; }
 .site-card[data-status="maintenance"] .status-rail { background: var(--cyan); box-shadow: 0 0 14px rgba(74,199,184,.55); }
 .site-main { min-width: 0; padding: 17px 16px 15px; }
-.site-title-row > div { min-width: 0; display: flex; align-items: center; gap: 9px; }
+.site-title-row > div { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .site-host { overflow: hidden; margin: 0; font: 600 17px/1.2 Georgia, serif; text-overflow: ellipsis; white-space: nowrap; }
 .site-group { max-width: 120px; overflow: hidden; padding: 4px 7px; border: 1px solid rgba(74, 199, 184, 0.26); border-radius: 999px; color: var(--cyan); font: 700 8px/1 "Courier New", monospace; letter-spacing: 0.08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .maintenance-badge { flex: 0 0 auto; padding: 4px 7px; border: 1px solid rgba(255,181,71,.35); border-radius: 999px; color: var(--amber); font: 700 8px/1 "Courier New", monospace; letter-spacing: .08em; }
@@ -297,6 +303,38 @@ dialog::backdrop { background: rgba(0, 7, 5, 0.78); backdrop-filter: blur(8px); 
 @keyframes gate-spin { from { transform: translate(-50%, -50%) rotate(0); } to { transform: translate(-50%, -50%) rotate(360deg); } }
 @keyframes shimmer { to { background-position: -200% 0; } }
 
+.section-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.team-button { padding: 10px 13px; border: 1px solid rgba(74,199,184,.35); border-radius: 999px; background: rgba(74,199,184,.08); color: var(--cyan); font-size: 12px; font-weight: 700; cursor: pointer; }
+.team-button:hover, .team-button:focus-visible { border-color: var(--cyan); outline: none; }
+.site-project { padding: 4px 7px; border: 1px solid rgba(184,243,74,.2); border-radius: 999px; color: var(--acid); font: 700 8px/1 "Courier New", monospace; white-space: nowrap; }
+.plain-field select { width: 100%; padding: 14px; border: 0; outline: none; background: #08120f; color: var(--paper); font: 14px "Courier New", monospace; }
+.team-dialog .dialog-card { max-width: 560px; }
+.team-inline-form, .team-invite-controls, .team-invite-link { display: flex; gap: 7px; }
+.team-inline-form { margin: 12px 0 22px; }
+.team-inline-form input, .team-invite-controls select, .team-invite-link input { min-width: 0; flex: 1; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: #08120f; color: var(--paper); }
+.team-inline-form button, .team-invite-controls button, .team-invite-link button, .team-member button { padding: 10px 12px; border: 1px solid var(--acid); border-radius: 9px; background: transparent; color: var(--acid); cursor: pointer; white-space: nowrap; }
+.team-inline-form button:disabled, .team-invite-controls button:disabled, .team-member button:disabled { opacity: .5; cursor: wait; }
+.team-heading { margin: 24px 0 8px; color: var(--paper); font: 400 20px Georgia, serif; }
+.team-invite-form { margin: 24px 0 0; padding-top: 20px; border-top: 1px solid var(--line); }
+.team-invite-controls { margin-top: 8px; }
+.team-invite-result { margin-top: 14px; padding: 12px; border: 1px solid rgba(184,243,74,.35); border-radius: 11px; background: rgba(184,243,74,.05); }
+.team-invite-result > span { display: block; margin-bottom: 8px; color: var(--acid); font: 700 10px "Courier New", monospace; }
+.team-invite-link input { width: 100%; font: 11px "Courier New", monospace; }
+.team-invite-result small { display: block; margin-top: 8px; color: var(--muted); }
+.team-invite-list { display: grid; gap: 6px; margin-top: 18px; color: var(--muted); font-size: 12px; }
+.team-dialog { max-height: calc(100dvh - 24px); overflow-y: auto; }
+.team-member-list { display: grid; gap: 5px; margin-top: 12px; }
+.team-member { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; color: var(--paper); font: 12px "Courier New", monospace; }
+.team-member-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.team-member-controls select { min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: #08120f; color: var(--paper); font-size: 11px; }
+@media (max-width: 480px) {
+  .team-invite-controls, .team-invite-link { flex-wrap: wrap; }
+  .team-invite-controls select, .team-invite-link input { flex-basis: 100%; }
+  .team-invite-controls button, .team-invite-link button { width: 100%; }
+  .team-member { align-items: flex-start; flex-direction: column; }
+  .team-member-controls { justify-content: space-between; width: 100%; }
+}
+
 @media (max-width: 720px) {
   .gate-stage { grid-template-columns: 1fr; align-content: center; padding: 48px 0 34px; }
   .gate-beacon { position: absolute; top: 18%; right: -25%; width: 280px; opacity: 0.42; }
@@ -304,7 +342,7 @@ dialog::backdrop { background: rgba(0, 7, 5, 0.78); backdrop-filter: blur(8px); 
   .gate-copy h1, .gate-lead { max-width: 540px; }
   .gate-instruction { grid-template-columns: auto 1fr; }
   .gate-status { display: none; }
-  .resource-controls { grid-template-columns: 1fr 1fr; }
+  .resource-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "search search" "project group" "tag sort" "count count"; }
 }
 
 @media (max-width: 480px) {
@@ -319,8 +357,9 @@ dialog::backdrop { background: rgba(0, 7, 5, 0.78); backdrop-filter: blur(8px); 
   .hero { min-height: 246px; }
   .signal-orbit { opacity: 0.72; right: -72px; }
   .site-actions .danger-action { margin-left: 0; }
-  .resource-controls { align-items: stretch; flex-direction: column; }
-  .resource-controls { grid-template-columns: 1fr; }
+  .resource-controls { align-items: stretch; grid-template-areas: "search search" "project project" "group tag" "sort sort" "count count"; }
+  .section-head { align-items: flex-start; flex-direction: column; }
+  .section-actions { justify-content: flex-start; width: 100%; }
   .sort-control { min-width: 0; }
   .sort-control > span { text-align: left; }
   .history-summary { grid-template-columns: repeat(2, 1fr); }
@@ -331,18 +370,3 @@ dialog::backdrop { background: rgba(0, 7, 5, 0.78); backdrop-filter: blur(8px); 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
-
-.section-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.team-button { padding: 10px 13px; border: 1px solid rgba(74,199,184,.35); border-radius: 999px; background: rgba(74,199,184,.08); color: var(--cyan); font-size: 12px; font-weight: 700; cursor: pointer; }
-.team-button:hover, .team-button:focus-visible { border-color: var(--cyan); outline: none; }
-.site-project { padding: 4px 7px; border: 1px solid rgba(184,243,74,.2); border-radius: 999px; color: var(--acid); font: 700 8px/1 "Courier New", monospace; white-space: nowrap; }
-.plain-field select { width: 100%; padding: 14px; border: 0; outline: none; background: #08120f; color: var(--paper); font: 14px "Courier New", monospace; }
-.team-dialog .dialog-card { max-width: 560px; }
-.team-identity { margin: 0 0 18px; color: var(--cyan); font: 700 11px "Courier New", monospace; }
-.team-inline-form, .team-member-form { display: flex; gap: 7px; margin: 12px 0 22px; }
-.team-inline-form input, .team-member-form input, .team-member-form select { min-width: 0; flex: 1; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: #08120f; color: var(--paper); }
-.team-member-form select { flex: 0 0 105px; }
-.team-inline-form button, .team-member-form button, .team-member button { padding: 10px 12px; border: 1px solid var(--acid); border-radius: 9px; background: transparent; color: var(--acid); cursor: pointer; }
-.team-member-list { display: grid; gap: 5px; margin-top: 12px; }
-.team-member { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; color: var(--paper); font: 12px "Courier New", monospace; }
-@media (max-width: 480px) { .section-head { align-items: flex-start; } .section-actions { max-width: 180px; } .team-member-form { flex-wrap: wrap; } .team-member-form input { flex-basis: 100%; } }

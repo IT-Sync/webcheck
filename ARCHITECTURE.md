@@ -94,8 +94,14 @@ existing sites into each owner's personal project. `sites.user_id` remains the
 owner and alert recipient for compatibility with scheduling and Telegram bot
 commands. The Mini App lists accessible projects and filters resources by project.
 Viewers can read status and history; managers can mutate sites; only owners can
-manage project members. Database writes enforce these permissions independently
-of UI controls. The owner cannot be removed while a project has members.
+manage project members. Owners create one-use, seven-day deep links in the Mini
+App; `project_invites` stores only SHA-256 token hashes, roles, expiry, and
+consumption/revocation state. Telegram's private `/start join_<token>` event
+identifies the invitee; a row lock makes token consumption and membership insert
+atomic. The direct member-add API is removed; owners can still change an existing
+member's role from the roster. Database writes enforce these
+permissions independently of UI controls. The owner cannot be removed while a
+project has members.
 
 Sites have an optional `site_group` field and normalized rows in `site_tags`.
 Search plus independent group and tag filtering happen in the Mini App over the
@@ -141,6 +147,9 @@ response through the same bot before recording it as an administrator message.
 | --- | --- | --- | --- |
 | `11003` | `/app/` | Telegram supplies auth to API | Mini App static shell |
 | `11003` | `/api/webapp/bootstrap` | Telegram `initData` | User, metrics, and sites |
+| `11003` | `/api/webapp/projects/{id}/invites` | Telegram `initData` + project owner | Create/list one-use invitations |
+| `11003` | `/api/webapp/projects/{id}/invites/{invite_id}` | Telegram `initData` + project owner | Revoke an invitation |
+| Telegram | `/start join_<token>` | Telegram sender identity + invite token | Join a project |
 | `11003` | `/api/webapp/sites` | Telegram `initData` | Add a site |
 | `11003` | `/api/webapp/sites/{id}/*` | Telegram `initData` + ownership | Check or mutate a site |
 | `11003` | `/api/webapp/sites/{id}/history` | Telegram `initData` + ownership | Resource history and aggregates |

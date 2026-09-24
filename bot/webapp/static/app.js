@@ -43,14 +43,16 @@
     project: document.querySelector("#project-select"),
     siteProject: document.querySelector("#site-project"),
     teamDialog: document.querySelector("#team-dialog"),
-    teamIdentity: document.querySelector("#team-identity"),
     teamCreateForm: document.querySelector("#team-create-form"),
     teamProjectName: document.querySelector("#team-project-name"),
     teamProjectSelect: document.querySelector("#team-project-select"),
     teamMemberList: document.querySelector("#team-member-list"),
-    teamMemberForm: document.querySelector("#team-member-form"),
-    teamMemberId: document.querySelector("#team-member-id"),
-    teamMemberRole: document.querySelector("#team-member-role"),
+    teamInviteForm: document.querySelector("#team-invite-form"),
+    teamInviteRole: document.querySelector("#team-invite-role"),
+    teamInviteResult: document.querySelector("#team-invite-result"),
+    teamInviteLink: document.querySelector("#team-invite-link"),
+    teamInviteList: document.querySelector("#team-invite-list"),
+    teamCopyInvite: document.querySelector("#team-copy-invite"),
     teamError: document.querySelector("#team-error"),
     monitorSection: document.querySelector("#monitor-section"),
     maintenanceDialog: document.querySelector("#maintenance-dialog"),
@@ -736,7 +738,8 @@
   async function loadTeamMembers() {
     const id = Number(elements.teamProjectSelect.value);
     const project = state.projects.find((item) => item.id === id);
-    elements.teamMemberForm.hidden = !project || project.role !== "owner";
+    elements.teamInviteForm.hidden = !project || project.role !== "owner";
+    elements.teamInviteList.hidden = !project || project.role !== "owner";
     elements.teamMemberList.textContent = "Загружаем участников…";
     if (!project) return;
     try {
@@ -746,9 +749,27 @@
         const row = document.createElement("div");
         const label = document.createElement("span");
         row.className = "team-member";
-        label.textContent = `${member.user_id} · ${member.role}`;
+        label.textContent = member.role === "owner" ? `Владелец · ${member.user_id}` : `Telegram · ${member.user_id}`;
         row.append(label);
         if (project.role === "owner" && member.role !== "owner") {
+          const controls = document.createElement("div");
+          const roleSelect = document.createElement("select");
+          controls.className = "team-member-controls";
+          roleSelect.setAttribute("aria-label", `Роль участника ${member.user_id}`);
+          roleSelect.replaceChildren(new Option("Наблюдатель", "viewer"), new Option("Управляющий", "manager"));
+          roleSelect.value = member.role;
+          roleSelect.addEventListener("change", async () => {
+            roleSelect.disabled = true;
+            try {
+              await api(`/api/webapp/projects/${id}/members/${member.user_id}`, {
+                method: "PATCH", body: JSON.stringify({ role: roleSelect.value }),
+              });
+              member.role = roleSelect.value;
+            } catch (error) {
+              roleSelect.value = member.role;
+              teamFailure(error);
+            } finally { roleSelect.disabled = false; }
+          });
           const remove = document.createElement("button");
           remove.type = "button";
           remove.textContent = "Убрать";
@@ -759,10 +780,44 @@
               await Promise.all([loadTeamMembers(), load()]);
             } catch (error) { teamFailure(error); remove.disabled = false; }
           });
-          row.append(remove);
+          controls.append(roleSelect, remove);
+          row.append(controls);
         }
         return row;
       }));
+    } catch (error) { teamFailure(error); }
+  }
+
+  async function loadTeamInvites() {
+    const id = Number(elements.teamProjectSelect.value);
+    const project = state.projects.find((item) => item.id === id);
+    if (!project || project.role !== "owner") return;
+    elements.teamInviteList.textContent = "Загружаем приглашения…";
+    try {
+      const payload = await api(`/api/webapp/projects/${id}/invites`);
+      if (Number(elements.teamProjectSelect.value) !== id) return;
+      elements.teamInviteList.replaceChildren(...payload.invites.map((invite) => {
+        const row = document.createElement("div");
+        const label = document.createElement("span");
+        const revoke = document.createElement("button");
+        row.className = "team-member";
+        label.textContent = `${invite.role === "manager" ? "Управляющий" : "Наблюдатель"} · до ${new Date(invite.expires_at).toLocaleDateString("ru-RU")}`;
+        revoke.type = "button";
+        revoke.textContent = "Отозвать";
+        revoke.addEventListener("click", async () => {
+          revoke.disabled = true;
+          try {
+            await api(`/api/webapp/projects/${id}/invites/${invite.id}`, { method: "DELETE" });
+            if (elements.teamInviteResult.dataset.inviteId === String(invite.id)) {
+              elements.teamInviteResult.hidden = true;
+            }
+            await loadTeamInvites();
+          } catch (error) { teamFailure(error); revoke.disabled = false; }
+        });
+        row.append(label, revoke);
+        return row;
+      }));
+      if (!payload.invites.length) elements.teamInviteList.textContent = "Активных приглашений нет";
     } catch (error) { teamFailure(error); }
   }
 
@@ -773,12 +828,13 @@
     if (state.projects.some((project) => String(project.id) === selected)) {
       elements.teamProjectSelect.value = selected;
     }
+    elements.teamInviteResult.hidden = true;
     loadTeamMembers();
+    loadTeamInvites();
   }
 
   function openTeam() {
     elements.teamError.classList.add("hidden");
-    elements.teamIdentity.textContent = `Ваш Telegram ID: ${state.user?.id || "—"}`;
     elements.teamDialog.showModal();
     document.body.classList.add("dialog-open");
     telegram?.BackButton?.show();
@@ -803,18 +859,38 @@
     } catch (error) { teamFailure(error); }
   }
 
-  async function saveTeamMember(event) {
+  async function createTeamInvite(event) {
     event.preventDefault();
     elements.teamError.classList.add("hidden");
     const projectId = Number(elements.teamProjectSelect.value);
-    const memberId = Number(elements.teamMemberId.value);
+    const submit = elements.teamInviteForm.querySelector('button[type="submit"]');
+    submit.disabled = true;
     try {
-      await api(`/api/webapp/projects/${projectId}/members/${memberId}`, {
-        method: "PUT", body: JSON.stringify({ role: elements.teamMemberRole.value }),
+      const payload = await api(`/api/webapp/projects/${projectId}/invites`, {
+        method: "POST", body: JSON.stringify({ role: elements.teamInviteRole.value }),
       });
-      elements.teamMemberId.value = "";
-      await loadTeamMembers();
+      elements.teamInviteLink.value = payload.invite.link;
+      elements.teamInviteResult.dataset.inviteId = String(payload.invite.id);
+      elements.teamInviteResult.hidden = false;
+      await loadTeamInvites();
+      haptic("medium");
     } catch (error) { teamFailure(error); }
+    finally { submit.disabled = false; }
+  }
+
+  async function copyTeamInvite() {
+    const link = elements.teamInviteLink.value;
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      elements.teamCopyInvite.textContent = "Скопировано";
+      window.setTimeout(() => { elements.teamCopyInvite.textContent = "Копировать"; }, 2200);
+      haptic();
+    } catch (_) {
+      elements.teamInviteLink.focus();
+      elements.teamInviteLink.select();
+      teamFailure(new Error("Выделите ссылку и скопируйте её вручную"));
+    }
   }
 
   function openAdd() {
@@ -916,8 +992,13 @@
   document.querySelector("#open-team").addEventListener("click", openTeam);
   document.querySelector("#close-team").addEventListener("click", closeTeam);
   elements.teamCreateForm.addEventListener("submit", createTeamProject);
-  elements.teamMemberForm.addEventListener("submit", saveTeamMember);
-  elements.teamProjectSelect.addEventListener("change", loadTeamMembers);
+  elements.teamInviteForm.addEventListener("submit", createTeamInvite);
+  elements.teamCopyInvite.addEventListener("click", copyTeamInvite);
+  elements.teamProjectSelect.addEventListener("change", () => {
+    elements.teamInviteResult.hidden = true;
+    loadTeamMembers();
+    loadTeamInvites();
+  });
   elements.teamDialog.addEventListener("close", cleanupAddDialog);
   elements.teamDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeTeam(); });
   elements.teamDialog.addEventListener("click", (event) => {

@@ -14,7 +14,7 @@ from bot.infra.db import (
     admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
     get_site_pause_status, create_maintenance_window,
     add_user_feedback_message, cancel_feedback_waiting,
-    is_feedback_waiting, start_feedback_waiting
+    is_feedback_waiting, start_feedback_waiting, consume_project_invite
 )
 from bot.agent_server.checks import check_with_agents
 from bot.checks.monitor import get_geo_info
@@ -165,6 +165,26 @@ async def process_site_input(user_id, username, url, bot):
     
     await bot.send_message(user_id, f"✅ Добавлен сайт: {url}\nПроверяю...")
     await send_status_report(user_id, url, bot, site_id=site_id)
+
+@router.message(F.text.startswith("/start join_"))
+async def cmd_join_project(message: types.Message):
+    if message.chat.type != "private":
+        return await message.answer("Откройте приглашение в личном чате с ботом.")
+    token = message.text[len("/start join_"):].strip()
+    try:
+        joined = consume_project_invite(token, message.from_user.id)
+    except Exception as exc:
+        print(f"Failed to accept project invite: {type(exc).__name__}: {exc}")
+        return await message.answer("Не удалось принять приглашение. Попробуйте позже.")
+    if not joined:
+        return await message.answer("Ссылка недействительна, уже использована или срок её действия истёк. Попросите новую у владельца проекта.")
+    log_user_action(message.from_user.id, f"Joined project {joined['project_id']} as {joined['role']}", message.from_user.username)
+    role = "управляющий" if joined["role"] == "manager" else "наблюдатель"
+    await message.answer(
+        f"Вы присоединились к проекту «{joined['project_name']}» как {role}. Откройте панель, чтобы увидеть ресурсы.",
+        reply_markup=build_web_app_keyboard(),
+    )
+
 
 @router.message(F.text == "/start")
 async def cmd_start(message: types.Message):

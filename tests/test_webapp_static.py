@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -6,6 +7,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "bot" / "webapp" / "server.py"
 INDEX = ROOT / "bot" / "webapp" / "static" / "index.html"
 SCRIPT = ROOT / "bot" / "webapp" / "static" / "app.js"
+STYLE = ROOT / "bot" / "webapp" / "static" / "app.css"
+HANDLERS = ROOT / "bot" / "telegram" / "handlers.py"
 
 
 class WebAppStaticMarkupTest(unittest.TestCase):
@@ -20,8 +23,8 @@ class WebAppStaticMarkupTest(unittest.TestCase):
     def test_frontend_assets_have_cache_busting_version(self):
         source = INDEX.read_text(encoding="utf-8")
 
-        self.assertIn("/app/static/app.css?v=11", source)
-        self.assertIn("/app/static/app.js?v=11", source)
+        self.assertIn("/app/static/app.css?v=12", source)
+        self.assertIn("/app/static/app.js?v=12", source)
 
     def test_status_metrics_are_filter_controls(self):
         source = INDEX.read_text(encoding="utf-8")
@@ -66,13 +69,30 @@ class WebAppStaticMarkupTest(unittest.TestCase):
         script = SCRIPT.read_text(encoding="utf-8")
         server = SERVER.read_text(encoding="utf-8")
         for control in ('id="project-select"', 'id="site-project"',
-                        'id="team-dialog"', 'id="team-member-form"'):
+                        'id="team-dialog"', 'id="team-invite-form"'):
             self.assertIn(control, markup)
         self.assertIn('site.role === "viewer"', script)
         self.assertIn('project_id: Number(elements.siteProject.value)', script)
         self.assertIn('api/webapp/projects', script)
         self.assertIn('get_site_role(site[0], user.id)', server)
-        self.assertIn('add_put("/api/webapp/projects/', server)
+        self.assertIn('add_post("/api/webapp/projects/{project_id:', server)
+        self.assertIn('/invites", create_project_invite_route)', server)
+        self.assertNotIn('update_project_member', server)
+        self.assertNotIn('id="team-member-id"', markup)
+        self.assertIn('F.text.startswith("/start join_")',
+                      HANDLERS.read_text(encoding="utf-8"))
+
+    def test_layout_controls_have_unique_ids_and_responsive_slots(self):
+        markup = INDEX.read_text(encoding="utf-8")
+        script = SCRIPT.read_text(encoding="utf-8")
+        style = STYLE.read_text(encoding="utf-8")
+        ids = re.findall(r'\bid="([^"]+)"', markup)
+        self.assertEqual(len(ids), len(set(ids)))
+        selectors = re.findall(r'document\.querySelector\("#([A-Za-z0-9-]+)"\)', script)
+        self.assertFalse(set(selectors) - set(ids))
+        self.assertIn('grid-template-areas: "search project group tag"', style)
+        self.assertIn('grid-template-areas: "search search" "project project"', style)
+        self.assertIn('id="team-invite-link" readonly', markup)
 
     def test_feedback_returns_the_user_to_the_bot(self):
         markup = INDEX.read_text(encoding="utf-8")

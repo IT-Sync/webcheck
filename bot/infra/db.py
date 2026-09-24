@@ -1,4 +1,7 @@
 from datetime import datetime, timedelta
+import hashlib
+import re
+import secrets
 import csv
 import json
 from psycopg2.extras import Json
@@ -116,6 +119,110 @@ def set_project_member(project_id, owner_user_id, member_user_id, role):
         """, (project_id, member_user_id, role))
         conn.commit()
         return True
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def create_project_invite(project_id, owner_user_id, role):
+    """Create a one-use, seven-day invitation; return the secret only once."""
+    if role not in ('viewer', 'manager'):
+        raise ValueError('invalid_invite_role')
+    token = secrets.token_urlsafe(24)
+    token_hash = hashlib.sha256(token.encode('ascii')).hexdigest()
+    try:
+        c.execute('SELECT owner_user_id FROM projects WHERE id = %s FOR UPDATE', (project_id,))
+        row = c.fetchone()
+        if not row or row[0] != owner_user_id:
+            conn.rollback()
+            return None
+        c.execute('''
+            INSERT INTO project_invites (project_id, token_hash, role, created_by, expires_at)
+            VALUES (%s, %s, %s, %s, %s) RETURNING id, expires_at
+        ''', (project_id, token_hash, role, owner_user_id,
+              datetime.utcnow() + timedelta(days=7)))
+        invite_id, expires_at = c.fetchone()
+        conn.commit()
+        return dict(id=invite_id, token=token, role=role, expires_at=expires_at)
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def get_project_invites(project_id, owner_user_id):
+    c.execute('''
+        SELECT invite.id, invite.role, invite.expires_at
+        FROM project_invites AS invite
+        JOIN projects AS project ON project.id = invite.project_id
+        WHERE invite.project_id = %s AND project.owner_user_id = %s
+          AND invite.used_at IS NULL AND invite.revoked_at IS NULL
+          AND invite.expires_at > %s
+        ORDER BY invite.created_at DESC, invite.id DESC
+    ''', (project_id, owner_user_id, datetime.utcnow()))
+    return [dict(id=row[0], role=row[1], expires_at=row[2]) for row in c.fetchall()]
+
+
+def revoke_project_invite(invite_id, project_id, owner_user_id):
+    c.execute('''
+        UPDATE project_invites AS invite SET revoked_at = %s
+        FROM projects AS project
+        WHERE invite.id = %s AND invite.project_id = %s
+          AND project.id = invite.project_id AND project.owner_user_id = %s
+          AND invite.used_at IS NULL AND invite.revoked_at IS NULL
+    ''', (datetime.utcnow(), invite_id, project_id, owner_user_id))
+    changed = c.rowcount > 0
+    conn.commit()
+    return changed
+
+
+def consume_project_invite(token, user_id):
+    """Atomically accept a link for the signed-in Telegram user."""
+    if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_-]{32}', token) or user_id <= 0:
+        return None
+    token_hash = hashlib.sha256(token.encode('ascii')).hexdigest()
+    try:
+        c.execute('''
+            SELECT invite.id, invite.project_id, invite.role, invite.expires_at,
+                   invite.used_at, invite.revoked_at, project.owner_user_id,
+                   project.name
+            FROM project_invites AS invite
+            JOIN projects AS project ON project.id = invite.project_id
+            WHERE invite.token_hash = %s FOR UPDATE OF invite
+        ''', (token_hash,))
+        row = c.fetchone()
+        if not row or row[3] <= datetime.utcnow() or row[4] or row[5] or row[6] == user_id:
+            conn.rollback()
+            return None
+        c.execute('''
+            INSERT INTO project_members (project_id, user_id, role)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (project_id, user_id) DO UPDATE SET role = EXCLUDED.role
+        ''', (row[1], user_id, row[2]))
+        c.execute('UPDATE project_invites SET used_at = %s, used_by = %s WHERE id = %s',
+                  (datetime.utcnow(), user_id, row[0]))
+        conn.commit()
+        return dict(project_id=row[1], project_name=row[7], role=row[2])
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def change_project_member_role(project_id, owner_user_id, member_user_id, role):
+    if role not in ('viewer', 'manager'):
+        raise ValueError('invalid_member_role')
+    try:
+        c.execute('SELECT owner_user_id FROM projects WHERE id = %s FOR UPDATE', (project_id,))
+        row = c.fetchone()
+        if not row or row[0] != owner_user_id:
+            conn.rollback()
+            return False
+        c.execute('''
+            UPDATE project_members SET role = %s
+            WHERE project_id = %s AND user_id = %s
+        ''', (role, project_id, member_user_id))
+        changed = c.rowcount > 0
+        conn.commit()
+        return changed
     except Exception:
         conn.rollback()
         raise

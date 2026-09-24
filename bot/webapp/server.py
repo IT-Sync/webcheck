@@ -11,7 +11,8 @@ from bot.checks.service import check_resource
 from bot.core.status_formatter import append_agent_results, format_status_text
 from bot.infra.db import (
     add_site, add_site_to_project, cancel_maintenance_window,
-    create_maintenance_window, create_project, ensure_personal_project,
+    create_maintenance_window, create_project, create_project_invite,
+    get_project_invites, revoke_project_invite, ensure_personal_project,
     delete_site_by_id,
     get_site_by_url_for_user, get_site_by_url_in_project, get_site_role,
     get_project_role, get_projects_for_user, get_project_members,
@@ -24,7 +25,7 @@ from bot.infra.db import (
     cancel_feedback_waiting,
     set_site_paused_by_id,
     set_site_group_by_id, set_site_tags_by_id,
-    set_project_member, remove_project_member,
+    change_project_member_role, remove_project_member,
     update_site_status_by_id,
 )
 from bot.webapp.auth import TelegramAuthError, validate_init_data
@@ -247,21 +248,74 @@ async def list_project_members(request: web.Request) -> web.Response:
 
 
 @require_telegram_user
-async def update_project_member(request: web.Request) -> web.Response:
+async def list_project_invites(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    project_id = int(request.match_info["project_id"])
+    if get_project_role(project_id, user.id) != "owner":
+        return _json_error("Доступно только владельцу", status=403, code="forbidden")
+    invites = get_project_invites(project_id, user.id)
+    for invite in invites:
+        invite["expires_at"] = _iso(invite["expires_at"])
+    return web.json_response({"ok": True, "invites": invites})
+
+
+@require_telegram_user
+async def create_project_invite_route(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    project_id = int(request.match_info["project_id"])
+    if get_project_role(project_id, user.id) != "owner":
+        return _json_error("Доступно только владельцу", status=403, code="forbidden")
+    try:
+        data = await request.json()
+        role = data["role"]
+        if role not in ("viewer", "manager"):
+            raise ValueError()
+    except (ValueError, KeyError, TypeError):
+        return _json_error("Выберите роль viewer или manager", code="invalid_role")
+    try:
+        bot_info = await request.app["bot"].get_me()
+        if not bot_info.username:
+            raise ValueError("Bot username missing")
+    except Exception:
+        return _json_error("Не удалось получить имя бота для ссылки", status=503, code="bot_unavailable")
+    invite = create_project_invite(project_id, user.id, role)
+    if invite is None:
+        return _json_error("Доступно только владельцу", status=403, code="forbidden")
+    link = f"https://t.me/{bot_info.username}?start=join_{invite['token']}"
+    log_user_action(user.id, f"Mini App: created {role} invite for project {project_id}", user.username)
+    return web.json_response({"ok": True, "invite": {
+        "id": invite["id"], "role": role, "expires_at": _iso(invite["expires_at"]),
+        "link": link,
+    }}, status=201)
+
+
+@require_telegram_user
+async def revoke_project_invite_route(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    project_id = int(request.match_info["project_id"])
+    invite_id = int(request.match_info["invite_id"])
+    if not revoke_project_invite(invite_id, project_id, user.id):
+        return _json_error("Приглашение не найдено или нет права", status=404, code="not_found")
+    log_user_action(user.id, f"Mini App: revoked invite {invite_id}", user.username)
+    return web.json_response({"ok": True})
+
+
+@require_telegram_user
+async def update_existing_project_member(request: web.Request) -> web.Response:
     user = request["telegram_user"]
     project_id = int(request.match_info["project_id"])
     member_id = int(request.match_info["member_id"])
     try:
         data = await request.json()
         role = data["role"]
-        if role not in ("viewer", "manager") or member_id <= 0:
+        if role not in ("viewer", "manager"):
             raise ValueError()
     except (ValueError, KeyError, TypeError):
-        return _json_error("Укажите Telegram ID и роль viewer или manager", code="invalid_member")
-    if not set_project_member(project_id, user.id, member_id, role):
-        return _json_error("Нет права управлять участниками", status=403, code="forbidden")
-    log_user_action(user.id, f"Mini App: set project {project_id} member {member_id} to {role}", user.username)
-    return web.json_response({"ok": True, "members": get_project_members(project_id, user.id)})
+        return _json_error("Выберите роль viewer или manager", code="invalid_role")
+    if not change_project_member_role(project_id, user.id, member_id, role):
+        return _json_error("Участник не найден или нет права", status=404, code="not_found")
+    log_user_action(user.id, f"Mini App: changed project {project_id} member {member_id} to {role}", user.username)
+    return web.json_response({"ok": True})
 
 
 @require_telegram_user
@@ -586,7 +640,10 @@ def setup_webapp_routes(app: web.Application) -> None:
     app.router.add_get("/api/webapp/projects", list_projects)
     app.router.add_post("/api/webapp/projects", create_project_route)
     app.router.add_get("/api/webapp/projects/{project_id:\d+}/members", list_project_members)
-    app.router.add_put("/api/webapp/projects/{project_id:\d+}/members/{member_id:\d+}", update_project_member)
+    app.router.add_get("/api/webapp/projects/{project_id:\d+}/invites", list_project_invites)
+    app.router.add_post("/api/webapp/projects/{project_id:\d+}/invites", create_project_invite_route)
+    app.router.add_delete("/api/webapp/projects/{project_id:\d+}/invites/{invite_id:\d+}", revoke_project_invite_route)
+    app.router.add_patch("/api/webapp/projects/{project_id:\d+}/members/{member_id:\d+}", update_existing_project_member)
     app.router.add_delete("/api/webapp/projects/{project_id:\d+}/members/{member_id:\d+}", delete_project_member)
     app.router.add_post("/api/webapp/feedback/start", start_feedback)
     app.router.add_post("/api/webapp/sites", create_site)

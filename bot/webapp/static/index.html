@@ -7,9 +7,9 @@
   <meta name="theme-color" content="#07110f">
   <meta name="robots" content="noindex, nofollow">
   <title>Webcheck</title>
-  <link rel="stylesheet" href="/app/static/app.css?v=11">
+  <link rel="stylesheet" href="/app/static/app.css?v=12">
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <script src="/app/static/app.js?v=11" defer></script>
+  <script src="/app/static/app.js?v=12" defer></script>
 </head>
 <body>
   <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -214,20 +214,28 @@
       <button class="dialog-close" id="close-team" aria-label="Закрыть" type="button">×</button>
       <p class="eyebrow">PROJECT ACCESS / TEAM</p>
       <h2>Проекты и доступ</h2>
-      <p class="dialog-copy">Владелец приглашает по Telegram ID. Manager меняет ресурсы; viewer видит статусы и историю. Алерты получает владелец.</p>
-      <p class="team-identity" id="team-identity"></p>
+      <p class="dialog-copy">Создайте ссылку для одного участника. Выберите роль, отправьте ссылку в Telegram — человек присоединится сам. Ссылка действует 7 дней; алерты остаются у владельца.</p>
       <form id="team-create-form" class="team-inline-form">
         <input id="team-project-name" maxlength="40" required placeholder="Новый проект" aria-label="Название нового проекта">
         <button type="submit">Создать</button>
       </form>
-      <label for="team-project-select">Участники проекта</label>
+      <label for="team-project-select">Проект</label>
       <div class="plain-field"><select id="team-project-select"></select></div>
+      <h3 class="team-heading">Участники</h3>
       <div id="team-member-list" class="team-member-list"></div>
-      <form id="team-member-form" class="team-member-form">
-        <input id="team-member-id" type="number" min="1" required placeholder="Telegram ID" aria-label="Telegram ID участника">
-        <select id="team-member-role" aria-label="Роль участника"><option value="viewer">viewer</option><option value="manager">manager</option></select>
-        <button type="submit">Назначить</button>
+      <form id="team-invite-form" class="team-invite-form">
+        <label for="team-invite-role">Пригласить участника</label>
+        <div class="team-invite-controls">
+          <select id="team-invite-role" aria-label="Роль приглашённого"><option value="viewer">Наблюдатель</option><option value="manager">Управляющий</option></select>
+          <button type="submit">Создать ссылку</button>
+        </div>
       </form>
+      <div id="team-invite-result" class="team-invite-result" hidden>
+        <span>Одноразовая ссылка · 7 дней</span>
+        <div class="team-invite-link"><input id="team-invite-link" readonly aria-label="Ссылка приглашения"><button id="team-copy-invite" type="button">Копировать</button></div>
+        <small>После закрытия окна ссылка не показывается повторно.</small>
+      </div>
+      <div id="team-invite-list" class="team-invite-list"></div>
       <p class="form-error hidden" id="team-error"></p>
     </section>
   </dialog>

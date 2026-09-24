@@ -27,6 +27,19 @@ def ensure_base_schema(cursor, connection):
         PRIMARY KEY (project_id, user_id)
     )''')
 
+    cursor.execute('''CREATE TABLE IF NOT EXISTS project_invites (
+        id BIGSERIAL PRIMARY KEY,
+        project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        role TEXT NOT NULL CHECK (role IN ('viewer', 'manager')),
+        created_by BIGINT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP,
+        used_by BIGINT,
+        revoked_at TIMESTAMP
+    )''')
+
     cursor.execute('''CREATE TABLE IF NOT EXISTS events (
         id SERIAL PRIMARY KEY,
         url TEXT,

@@ -42,7 +42,7 @@ should not become a chronological changelog.
 ## Product Feature Backlog
 
 These are planned capabilities, not implemented behavior. Team projects with
-owner, viewer, and manager roles are implemented. Retention, hourly and
+owner, viewer, and manager roles and Telegram deep-link invitations are implemented. Retention, hourly and
 daily aggregation, selectable one-day, seven-day, and 30-day resource history,
 groups, multiple tags, combined search/filtering, structured maintenance windows,
 the searchable all-customer site registry, sortable administrative tables, and
