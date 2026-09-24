@@ -84,11 +84,22 @@ stored as Telegram file identifiers rather than database blobs. The bot notifies
 attachment viewing, complete conversation history, and replies delivered from
 the bot.
 
+## Module Boundaries
+
+Owner-only Telegram commands are registered from
+`bot.telegram.admin_commands` on the existing handlers router before the
+general text handler. `bot.telegram.reporting` handles weekly report
+delivery and blocked-user cleanup, while `scheduler.py` keeps monitoring
+and job scheduling. `bot.admin_console.layout` renders the shared admin
+shell; `server.py` retains routes and request handling.
+
 ## Database Access
 
-`bot.infra.repository.DatabaseRepository` owns a bounded, thread-safe psycopg2
-connection pool. Existing functions in `bot.infra.db` retain their signatures
-through compatibility cursor and connection facades while each worker thread
+`bot.infra.schema.ensure_base_schema` creates base tables at startup in the
+existing order and transaction. `bot.infra.repository.DatabaseRepository` owns a
+bounded, thread-safe psycopg2 connection pool. Existing functions in
+`bot.infra.db` retain their signatures through compatibility cursor and
+connection facades while each worker thread
 checks out an independent connection. Reads release their connection after
 fetching; writes retain it until commit or rollback. `DB_POOL_MIN_SIZE` defaults
 to one and `DB_POOL_MAX_SIZE` to ten. The access layer remains synchronous, so
@@ -167,9 +178,9 @@ next sequence is regional classification and public status pages.
 
 ## Validation Baseline
 
-The current suite contains 62 `unittest` tests. The standard run passes 57 and
+The current suite contains 63 `unittest` tests. The standard run passes 58 and
 skips five PostgreSQL integration tests unless `TEST_DATABASE_URL` points to a
-disposable database; all 62 pass when that database is provided.
+disposable database; all 63 pass when that database is provided.
 
 ```bash
 python -m unittest discover -s tests -v

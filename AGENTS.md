@@ -22,8 +22,10 @@ WebSocket connection.
 - `bot/checks/` — HTTP, SSL, WHOIS, GeoIP, and subdomain checks.
 - `bot/core/` — pure formatters and URL helpers; prefer this package for logic
   that does not depend on Telegram, the network, or the database.
-- `bot/infra/db.py` — schema, migrations, and the synchronous PostgreSQL access
-  layer.
+- `bot/infra/db.py` — public persistence functions and startup migrations.
+- `bot/infra/schema.py` — additive base-table setup.
+- `bot/infra/repository.py` — bounded psycopg2 connection pool and compatibility
+  connection/cursor facades.
 - `bot/admin_console/` — aiohttp administrative console.
 - `bot/agent_server/` — WebSocket server and connected-agent registry.
 - `agent/` — standalone remote agent with its own Dockerfile, Compose file, and
@@ -144,8 +146,9 @@ functions; mock external HTTP, DNS, WHOIS, Telegram, WebSocket, and PostgreSQL
 calls. If a change requires an integration test, clearly document the required
 services and environment variables.
 
-`bot.infra.db` opens a PostgreSQL connection at import time. Do not import it in
-isolated unit tests without a prepared database or a substituted dependency.
+`bot.infra.db` initializes its PostgreSQL connection pool at import time.
+Do not import it in isolated unit tests without a prepared database or a
+substituted dependency.
 Starting the complete application also requires an available PostgreSQL instance
 and a valid `BOT_TOKEN`.
 
@@ -180,15 +183,17 @@ and a valid `BOT_TOKEN`.
   into SQL strings.
 - Commit writes. For new multi-step operations, ensure failures trigger a
   rollback.
-- The schema is created and extended from `bot/infra/db.py`. Startup migrations
-  must remain idempotent and additive, using constructs such as `IF NOT EXISTS`.
+- Base tables are created from `bot/infra/schema.py`; additive startup
+  migrations remain in `bot/infra/db.py`. Startup migrations must remain
+  idempotent and additive, using constructs such as `IF NOT EXISTS`.
   Do not add automatic `DROP`, `TRUNCATE`, or user-data cleanup operations.
 - When changing the selected columns or their order in a query, find every result
   consumer. Some code accesses rows by positional index, while other code uses
   dictionary-style access.
-- The global `conn` and `cursor` are an existing architectural constraint. Do not
-  increase concurrent access through the single cursor. Treat a migration to a
-  pool or async driver as a separate, thoroughly tested refactor.
+- `bot.infra.db` retains global compatibility facades for `conn` and `c`, while
+  `bot.infra.repository` checks out a connection per worker thread. Preserve
+  transaction boundaries and public persistence signatures when moving query
+  domains into smaller modules. An async driver remains a separate refactor.
 
 ## Scheduler and Notifications
 

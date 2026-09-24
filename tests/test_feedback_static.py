@@ -4,20 +4,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATABASE = ROOT / "bot" / "infra" / "db.py"
+SCHEMA = ROOT / "bot" / "infra" / "schema.py"
 HANDLERS = ROOT / "bot" / "telegram" / "handlers.py"
 WEBAPP = ROOT / "bot" / "webapp" / "server.py"
 
 
 class FeedbackStaticTest(unittest.TestCase):
     def test_feedback_schema_preserves_conversations_and_messages(self):
-        source = DATABASE.read_text(encoding="utf-8")
+        source = SCHEMA.read_text(encoding="utf-8")
 
         self.assertIn("CREATE TABLE IF NOT EXISTS feedback_conversations", source)
         self.assertIn("CREATE TABLE IF NOT EXISTS feedback_messages", source)
         self.assertIn("ON DELETE CASCADE", source)
 
     def test_feedback_schema_stores_telegram_media_without_binary_payloads(self):
-        source = DATABASE.read_text(encoding="utf-8")
+        source = SCHEMA.read_text(encoding="utf-8") + DATABASE.read_text(encoding="utf-8")
 
         self.assertIn("telegram_file_id TEXT", source)
         self.assertIn("media_group_id TEXT", source)

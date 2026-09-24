@@ -1,9 +1,8 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.infra.db import (
-    get_all_site_checks, get_report_sites, update_site_status_by_id,
-    log_event, delete_user_sites, log_user_action, update_site_success,
-    start_site_incident, clear_site_incident, get_latest_agent_results_for_urls
+    get_all_site_checks, update_site_status_by_id, log_event,
+    update_site_success, start_site_incident, clear_site_incident,
 )
 from bot.infra.db import get_site_flags_by_id, set_site_flags_by_id
 from bot.infra.maintenance import run_database_maintenance
@@ -13,17 +12,16 @@ from bot.checks.service import check_resource
 from bot.core.status_formatter import (
     append_agent_results,
     format_domain_expiry_alert, format_down_alert, format_recovery_alert,
-    format_ssl_expiry_alert, format_status_text, format_weekly_user_report_chunks,
-    group_rows_by_user
+    format_ssl_expiry_alert, format_status_text,
 )
 from bot.telegram.callback_data import site_check_now_callback, site_history_callback, site_pause_1h_callback
+from bot.telegram.reporting import BOT_OWNER_ID, notify_block, send_weekly_reports
 from datetime import datetime
 from aiogram.exceptions import TelegramForbiddenError
 import os
 import asyncio
 import time
 
-BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
 MAX_CONCURRENT_CHECKS = int(os.getenv("MAX_CONCURRENT_CHECKS", "30"))
 HTTP_FAILURE_THRESHOLD = int(os.getenv("HTTP_FAILURE_THRESHOLD", "2"))
 CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "5"))
@@ -325,49 +323,6 @@ async def process_site(bot, site_row):
             await bot.send_message(user_id, f"{url} — ошибка проверки: {e}")
         except TelegramForbiddenError:
             await notify_block(bot, user_id, url)
-
-async def notify_block(bot, user_id, url):
-    """Обработка блокировки: очистка сайтов пользователя и уведомление администратора."""
-    deleted_sites = delete_user_sites(user_id)
-    if deleted_sites > 0:
-        log_user_action(user_id, f"Автоудаление сайтов после блокировки бота: {deleted_sites}")
-        try:
-            await bot.send_message(
-                BOT_OWNER_ID,
-                (
-                    f"⚠️ Пользователь `{user_id}` заблокировал бота.\n"
-                    f"Удалено сайтов: {deleted_sites}\n"
-                    f"Триггер: {url}"
-                ),
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            print(f"Не удалось уведомить администратора: {e}")
-        log_event(url, f"Пользователь {user_id} заблокировал бота; удалено сайтов: {deleted_sites}")
-
-async def send_weekly_reports(bot):
-    rows = get_report_sites()
-    agent_results_by_url = get_latest_agent_results_for_urls(row["url"] for row in rows)
-    for row in rows:
-        row["agent_results"] = agent_results_by_url.get(row["url"], [])
-    grouped = group_rows_by_user(rows)
-
-    for user_id, user_rows in grouped.items():
-        try:
-            for chunk in format_weekly_user_report_chunks(user_rows):
-                await bot.send_message(user_id, chunk)
-        except TelegramForbiddenError:
-            first_url = user_rows[0]["url"] if user_rows else "weekly_report"
-            await notify_block(bot, user_id, first_url)
-        except Exception as e:
-            log_event("weekly_report", f"Не удалось отправить отчёт пользователю {user_id}: {e}")
-
-    if BOT_OWNER_ID:
-        try:
-            for chunk in format_weekly_user_report_chunks(rows, title="📅 Еженедельный админ-отчёт по всем ресурсам"):
-                await bot.send_message(BOT_OWNER_ID, chunk)
-        except Exception as e:
-            log_event("weekly_report", f"Не удалось отправить админ-отчёт: {e}")
 
 async def start_scheduler(bot):
     scheduler = AsyncIOScheduler(timezone=SCHEDULER_TIMEZONE)

@@ -21,8 +21,10 @@ should not become a chronological changelog.
   notification deduplication, feedback persistence, media proxying, album
   capture and reply delivery, retention boundaries and rollback, aggregation,
   and WebSocket-agent timeouts.
-- Continue separating large Telegram, scheduler, admin, and database modules
-  behind existing compatibility imports.
+- Continue separating the remaining Telegram callbacks, scheduler monitoring
+  flow, admin request handlers, and database query domains behind existing
+  compatibility imports. Owner-only commands, scheduled reporting, the admin
+  page shell, and base schema setup already have dedicated modules.
 - Apply explicit timeouts and bounded concurrency to remaining synchronous or
   external lookup paths.
 

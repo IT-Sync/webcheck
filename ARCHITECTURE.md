@@ -36,11 +36,16 @@ published on a private address reachable from Nginx and protected by a firewall.
 - `bot/main.py` loads `.env`, creates the bot, configures the Telegram Mini App
   menu button, starts the scheduler and both web servers, and begins polling.
 - `bot/telegram/` owns bot commands, callbacks, scheduler integration, message
-  tracking, and notification delivery.
+  tracking, and notification delivery. Owner-only commands live in
+  `admin_commands.py`; scheduled report delivery and blocked-user cleanup live
+  in `reporting.py`. `handlers.py` and `scheduler.py` retain their public imports
+  and registration entry points.
 - `bot/webapp/` owns Telegram `initData` validation, public-target validation,
   Mini App API routes, and static assets.
 - `bot/admin_console/` owns the administrative UI and hosts the shared aiohttp
-  application used by `/admin/`, `/app/`, and `/api/webapp/`.
+  application used by `/admin/`, `/app/`, and `/api/webapp/`. Its shared page
+  shell, navigation, styling, and client-side table behavior live in
+  `layout.py`; `server.py` owns routes and request handling.
 - `bot/agent_server/` owns WebSocket authentication, the online-agent registry,
   check dispatch, and result correlation.
 - `bot/checks/` owns central HTTP, TLS, WHOIS, GeoIP, and subdomain checks.
@@ -48,9 +53,10 @@ published on a private address reachable from Nginx and protected by a firewall.
   and scheduler flows.
 - `bot/infra/repository.py` owns the bounded, thread-safe psycopg2 connection
   pool and explicit transaction context.
-- `bot/infra/db.py` retains the public persistence function signatures, schema
-  setup, and additive startup migrations while routing compatibility
-  cursor/connection operations through the repository.
+- `bot/infra/db.py` retains the public persistence function signatures and
+  additive startup migrations while routing compatibility cursor/connection
+  operations through the repository. `bot/infra/schema.py` creates the base
+  tables in the existing order and transaction at import time.
 - `bot/core/` contains URL helpers and formatters that do not depend on Telegram
   or PostgreSQL.
 - `agent/` is a separately deployable remote checker.
