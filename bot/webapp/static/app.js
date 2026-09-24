@@ -15,7 +15,8 @@
   document.body.classList.add("telegram-access");
   const state = {
     sites: [], user: null, limit: 0, loaded: false, filter: "all",
-    sort: "priority", query: "", group: "all", historySite: null,
+    sort: "priority", query: "", group: "all", tag: "all", historySite: null,
+    maintenanceSite: null,
     historyDays: 7, historyRequest: 0,
   };
   const elements = {
@@ -27,6 +28,7 @@
     form: document.querySelector("#add-form"),
     input: document.querySelector("#site-url"),
     groupInput: document.querySelector("#site-group"),
+    tagsInput: document.querySelector("#site-tags"),
     formError: document.querySelector("#form-error"),
     submit: document.querySelector("#add-submit"),
     template: document.querySelector("#site-template"),
@@ -37,7 +39,18 @@
     sort: document.querySelector("#sort-select"),
     search: document.querySelector("#site-search"),
     group: document.querySelector("#group-select"),
+    tag: document.querySelector("#tag-select"),
     monitorSection: document.querySelector("#monitor-section"),
+    maintenanceDialog: document.querySelector("#maintenance-dialog"),
+    maintenanceForm: document.querySelector("#maintenance-form"),
+    maintenanceTitle: document.querySelector("#maintenance-title"),
+    maintenanceStart: document.querySelector("#maintenance-start"),
+    maintenanceEnd: document.querySelector("#maintenance-end"),
+    maintenanceReason: document.querySelector("#maintenance-reason"),
+    maintenanceError: document.querySelector("#maintenance-error"),
+    maintenanceSubmit: document.querySelector("#maintenance-submit"),
+    maintenanceList: document.querySelector("#maintenance-list"),
+    closeMaintenance: document.querySelector("#close-maintenance"),
     historyDialog: document.querySelector("#history-dialog"),
     historyEyebrow: document.querySelector("#history-eyebrow"),
     historyTitle: document.querySelector("#history-title"),
@@ -49,6 +62,7 @@
     historyPolicy: document.querySelector("#history-policy"),
     historyRegions: document.querySelector("#history-regions"),
     historyIncidents: document.querySelector("#history-incidents"),
+    historyMaintenance: document.querySelector("#history-maintenance"),
     historyEvents: document.querySelector("#history-events"),
     closeHistory: document.querySelector("#close-history"),
     feedback: document.querySelector("#open-feedback"),
@@ -112,7 +126,7 @@
   }
 
   function statusLabel(site) {
-    return ({ up: "В сети", down: "Недоступен", warning: "Внимание", paused: "На паузе", pending: "Ожидает" })[site.status_kind];
+    return ({ up: "В сети", down: "Недоступен", warning: "Внимание", paused: "На паузе", maintenance: "Обслуживание", pending: "Ожидает" })[site.status_kind];
   }
 
   function updateMetrics() {
@@ -139,10 +153,11 @@
         || (state.filter === "paused" && site.is_paused)
         || site.status_kind === state.filter;
       const groupMatches = state.group === "all" || (site.site_group || "") === state.group;
-      const haystack = `${site.url} ${site.site_group || ""}`.toLocaleLowerCase("ru");
-      return statusMatches && groupMatches && haystack.includes(state.query);
+      const tagMatches = state.tag === "all" || (site.tags || []).includes(state.tag);
+      const haystack = [site.url, site.site_group || "", ...(site.tags || [])].join(" ").toLocaleLowerCase("ru");
+      return statusMatches && groupMatches && tagMatches && haystack.includes(state.query);
     });
-    const priority = { down: 0, warning: 1, pending: 2, up: 3, paused: 4 };
+    const priority = { down: 0, warning: 1, pending: 2, up: 3, maintenance: 4, paused: 5 };
     return filtered.sort((left, right) => {
       if (state.sort === "name") return hostFromUrl(left.url).localeCompare(hostFromUrl(right.url), "ru");
       if (state.sort === "recent") return (Date.parse(right.last_checked) || 0) - (Date.parse(left.last_checked) || 0);
@@ -175,11 +190,20 @@
       groupBadge.textContent = site.site_group;
       groupBadge.classList.remove("hidden");
     }
+    const maintenanceBadge = card.querySelector(".maintenance-badge");
+    if (site.is_maintenance) maintenanceBadge.classList.remove("hidden");
+    const tagRail = card.querySelector(".site-tags");
+    tagRail.replaceChildren(...(site.tags || []).map((tag) => {
+      const token = document.createElement("span");
+      token.textContent = "#" + tag;
+      return token;
+    }));
 
     const actions = card.querySelector(".site-actions");
     const more = card.querySelector(".more-button");
     const toggle = card.querySelector('[data-action="toggle"]');
-    toggle.textContent = site.is_paused ? "Возобновить" : "Поставить на паузу";
+    toggle.textContent = site.is_maintenance ? "Идёт обслуживание" : (site.is_paused ? "Возобновить" : "Поставить на паузу");
+    toggle.disabled = site.is_maintenance;
 
     more.addEventListener("click", () => {
       const expanded = card.classList.toggle("expanded");
@@ -198,6 +222,14 @@
       }
       if (action === "group") {
         await changeGroup(site);
+        return;
+      }
+      if (action === "tags") {
+        await changeTags(site);
+        return;
+      }
+      if (action === "maintenance") {
+        await openMaintenance(site);
         return;
       }
       if (action === "delete") {
@@ -219,6 +251,7 @@
     elements.visibleCount.textContent = `${sites.length} из ${state.sites.length}`;
     elements.filterLabel.textContent = ({ all: "Все ресурсы", up: "Ресурсы в сети", attention: "Требуют внимания", paused: "Мониторинг на паузе" })[state.filter];
     renderGroups();
+    renderTags();
     updateMetrics();
   }
 
@@ -232,6 +265,18 @@
     );
     state.group = groups.includes(selected) ? selected : "all";
     elements.group.value = state.group;
+  }
+
+  function renderTags() {
+    const selected = state.tag;
+    const tags = [...new Set(state.sites.flatMap((site) => site.tags || []))]
+      .sort((left, right) => left.localeCompare(right, "ru"));
+    elements.tag.replaceChildren(
+      new Option("Все теги", "all"),
+      ...tags.map((tag) => new Option("#" + tag, tag)),
+    );
+    state.tag = tags.includes(selected) ? selected : "all";
+    elements.tag.value = state.tag;
   }
 
   function setFilter(filter, { scroll = true } = {}) {
@@ -342,6 +387,114 @@
     }
   }
 
+  async function changeTags(site) {
+    const current = (site.tags || []).join(", ");
+    const value = window.prompt("Теги через запятую (пустое значение уберёт теги):", current);
+    if (value === null) return;
+    try {
+      const payload = await api("/api/webapp/sites/" + site.id + "/tags", {
+        method: "POST",
+        body: JSON.stringify({ tags: value }),
+      });
+      state.sites = state.sites.map((item) => item.id === site.id ? payload.site : item);
+      render();
+      haptic("medium");
+    } catch (error) {
+      showNotice(error.message);
+    }
+  }
+
+  function localDateTimeValue(date) {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  }
+
+  function closeMaintenance() {
+    if (elements.maintenanceDialog.open) elements.maintenanceDialog.close();
+  }
+
+  async function openMaintenance(site) {
+    state.maintenanceSite = site;
+    const start = new Date();
+    start.setSeconds(0, 0);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    elements.maintenanceTitle.textContent = "Обслуживание · " + hostFromUrl(site.url);
+    elements.maintenanceStart.value = localDateTimeValue(start);
+    elements.maintenanceEnd.value = localDateTimeValue(end);
+    elements.maintenanceReason.value = "";
+    elements.maintenanceError.classList.add("hidden");
+    elements.maintenanceDialog.showModal();
+    document.body.classList.add("dialog-open");
+    telegram?.BackButton?.show();
+    await loadMaintenanceWindows();
+  }
+
+  async function loadMaintenanceWindows() {
+    if (!state.maintenanceSite) return;
+    elements.maintenanceList.innerHTML = "<p class=\"history-empty\">Загружаем окна…</p>";
+    try {
+      const payload = await api("/api/webapp/sites/" + state.maintenanceSite.id + "/maintenance");
+      const windows = payload.maintenance_windows || [];
+      elements.maintenanceList.replaceChildren(...windows.map((windowItem) => {
+        const row = document.createElement("article");
+        const copy = document.createElement("div");
+        const title = document.createElement("b");
+        const detail = document.createElement("span");
+        const cancel = document.createElement("button");
+        const starts = new Date(windowItem.starts_at);
+        const ends = new Date(windowItem.ends_at);
+        const active = starts <= new Date() && ends > new Date();
+        row.className = "maintenance-row" + (active ? " active" : "");
+        title.textContent = (active ? "ACTIVE · " : "SCHEDULED · ") + starts.toLocaleString("ru-RU") + " → " + ends.toLocaleString("ru-RU");
+        detail.textContent = windowItem.reason || "Без описания";
+        cancel.type = "button";
+        cancel.textContent = "Отменить";
+        cancel.addEventListener("click", async () => {
+          cancel.disabled = true;
+          try {
+            await api("/api/webapp/sites/" + state.maintenanceSite.id + "/maintenance/" + windowItem.id, { method: "DELETE" });
+            await Promise.all([loadMaintenanceWindows(), load()]);
+          } catch (error) {
+            elements.maintenanceError.textContent = error.message;
+            elements.maintenanceError.classList.remove("hidden");
+            cancel.disabled = false;
+          }
+        });
+        copy.append(title, detail);
+        row.append(copy, cancel);
+        return row;
+      }));
+      if (!windows.length) elements.maintenanceList.innerHTML = "<p class=\"history-empty\">Активных и будущих окон нет</p>";
+    } catch (error) {
+      elements.maintenanceList.textContent = error.message;
+    }
+  }
+
+  async function submitMaintenance(event) {
+    event.preventDefault();
+    if (!state.maintenanceSite) return;
+    elements.maintenanceError.classList.add("hidden");
+    elements.maintenanceSubmit.disabled = true;
+    try {
+      await api("/api/webapp/sites/" + state.maintenanceSite.id + "/maintenance", {
+        method: "POST",
+        body: JSON.stringify({
+          starts_at: new Date(elements.maintenanceStart.value).toISOString(),
+          ends_at: new Date(elements.maintenanceEnd.value).toISOString(),
+          reason: elements.maintenanceReason.value,
+        }),
+      });
+      elements.maintenanceReason.value = "";
+      await Promise.all([loadMaintenanceWindows(), load()]);
+      telegram?.HapticFeedback?.notificationOccurred("success");
+    } catch (error) {
+      elements.maintenanceError.textContent = error.message;
+      elements.maintenanceError.classList.remove("hidden");
+    } finally {
+      elements.maintenanceSubmit.disabled = false;
+    }
+  }
+
   function closeHistory() {
     if (elements.historyDialog.open) elements.historyDialog.close();
   }
@@ -368,6 +521,7 @@
     elements.historyLatencyChart.replaceChildren();
     elements.historyRegions.replaceChildren();
     elements.historyIncidents.replaceChildren();
+    elements.historyMaintenance.replaceChildren();
     elements.historyEvents.replaceChildren();
     elements.historyPolicy.textContent = "";
     try {
@@ -476,7 +630,7 @@
     }
 
     elements.historyPolicy.textContent = (
-      "Availability: только фактические agent checks; пропуски и плановое обслуживание исключены."
+      "Availability: только фактические agent checks; отсутствующие замеры не считаются. В окно ТО расписание отключено, ручные замеры учитываются."
     );
     elements.historyRegions.replaceChildren(...[...regions.values()].map((region) => {
       const chip = document.createElement("span");
@@ -507,6 +661,21 @@
       elements.historyIncidents.innerHTML = '<div class="history-empty">Центральных инцидентов не было</div>';
     }
 
+    const maintenance = (history.maintenance_windows || []).map((windowItem) => {
+      const row = document.createElement("article");
+      const time = document.createElement("time");
+      const text = document.createElement("p");
+      row.className = "history-maintenance-row";
+      time.textContent = new Date(windowItem.starts_at).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+      text.textContent = (windowItem.is_active ? "идёт сейчас" : "завершено") + " · " + formatDuration(windowItem.duration_seconds) + " · " + (windowItem.reason || "без описания");
+      row.append(time, text);
+      return row;
+    });
+    elements.historyMaintenance.replaceChildren(...maintenance);
+    if (!maintenance.length) {
+      elements.historyMaintenance.innerHTML = "<div class=\"history-empty\">Планового обслуживания не было</div>";
+    }
+
     const events = history.events.map((event) => {
       const row = document.createElement("article");
       row.className = "history-event";
@@ -529,6 +698,7 @@
     elements.formError.classList.add("hidden");
     elements.input.value = "";
     elements.groupInput.value = "";
+    elements.tagsInput.value = "";
     elements.dialog.showModal();
     document.body.classList.add("dialog-open");
     telegram?.BackButton?.show();
@@ -561,7 +731,7 @@
     try {
       const payload = await api("/api/webapp/sites", {
         method: "POST",
-        body: JSON.stringify({ url: elements.input.value, site_group: elements.groupInput.value }),
+        body: JSON.stringify({ url: elements.input.value, site_group: elements.groupInput.value, tags: elements.tagsInput.value }),
         timeoutMs: 8000,
       });
       state.sites.push(payload.site);
@@ -614,6 +784,10 @@
     state.group = elements.group.value;
     render();
   });
+  elements.tag.addEventListener("change", () => {
+    state.tag = elements.tag.value;
+    render();
+  });
   elements.closeAdd.addEventListener("click", (event) => {
     event.preventDefault();
     closeAdd();
@@ -626,6 +800,16 @@
   });
   elements.dialog.addEventListener("click", (event) => {
     if (event.target === elements.dialog) closeAdd();
+  });
+  elements.closeMaintenance.addEventListener("click", closeMaintenance);
+  elements.maintenanceForm.addEventListener("submit", submitMaintenance);
+  elements.maintenanceDialog.addEventListener("close", cleanupAddDialog);
+  elements.maintenanceDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeMaintenance();
+  });
+  elements.maintenanceDialog.addEventListener("click", (event) => {
+    if (event.target === elements.maintenanceDialog) closeMaintenance();
   });
   elements.closeHistory.addEventListener("click", closeHistory);
   elements.historyPeriods.forEach((button) => {
@@ -644,6 +828,7 @@
   });
   telegram?.BackButton?.onClick(closeAdd);
   telegram?.BackButton?.onClick(closeHistory);
+  telegram?.BackButton?.onClick(closeMaintenance);
 
   telegram?.ready();
   telegram?.expand();

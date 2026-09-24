@@ -20,9 +20,10 @@ remain compatible.
   management, status filters, and problem-first sorting.
 - Fast Mini App startup from a session cache while current data loads in the
   background.
-- Resource groups, search, group filtering, and selectable daily, weekly, and
-  monthly history with regional availability, average and peak latency charts,
-  structured central incidents, and monitoring events.
+- Resource groups, multiple tags, independent group/tag filtering, and
+  selectable daily, weekly, and monthly history with regional availability,
+  average and peak latency charts, structured central incidents, and monitoring
+  events.
 - Bounded DNS validation when a site is added, including rejection of private,
   loopback, link-local, and other non-public targets.
 - Administrative console with sortable data tables, a searchable all-site
@@ -237,15 +238,18 @@ Resource metrics are interactive filters. The default sort order places DOWN,
 warning, and pending resources before healthy and paused resources. Users can
 also sort by name or most recent check.
 
-Users can assign a resource to a group, search by domain or group, and filter the
-list by group. The resource history action shows availability and response-time
-aggregates by remote agent together with relevant monitoring events. Users can
-switch between one, seven, and 30 days. Availability
-uses observed remote-agent checks only: missing checks do not count as success or
-failure, and checks omitted during a pause or planned maintenance are excluded.
+Users can assign a resource to a group and up to eight tags, search by domain,
+group, or tag, and combine the group and tag filters. The resource history action shows availability and response-time aggregates by
+remote agent together with relevant monitoring events. Users can switch between
+one, seven, and 30 days. Availability uses observed remote-agent checks only:
+missing checks do not count as success or failure, and checks omitted during a
+pause or planned maintenance are excluded.
 Structured central incidents retain outage start/recovery diagnostics separately
-from agent availability. Existing sites start with no group and require no data
-migration by operators.
+from agent availability. Users can schedule maintenance with future start and
+end times and an optional reason. Scheduled monitoring and alerts are suppressed
+inside active windows, manual checks remain available, and their observed agent
+results still contribute to availability. Completed maintenance is shown separately in history and weekly reports. Existing sites start with no
+group or tags and require no operator data migration.
 
 Adding a site validates DNS but does not perform a full HTTP/TLS/WHOIS check in
 the request path. DNS work has a configurable timeout, and blocking DNS and TLS

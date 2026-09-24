@@ -176,6 +176,25 @@ class StatusFormatterTest(unittest.TestCase):
         self.assertIn("На паузе: 1", report)
         self.assertIn("https://down.example", report)
 
+    def test_weekly_report_distinguishes_planned_maintenance(self):
+        report = format_weekly_user_report([{
+            "url": "https://maintenance.example",
+            "last_status": "HTTP: OK | 200",
+            "last_checked": None,
+            "is_paused": False,
+            "is_maintenance": True,
+            "maintenance_ends_at": datetime(2026, 9, 24, 12, 0),
+            "maintenance_reason": "Database migration",
+            "maintenance_count_7d": 1,
+            "site_group": "Production",
+            "tags": ["api", "critical"],
+        }])
+
+        self.assertIn("Плановое обслуживание сейчас: 1", report)
+        self.assertIn("Плановых окон за 7 дней: 1", report)
+        self.assertIn("Database migration", report)
+        self.assertIn("теги: api, critical", report)
+
     def test_weekly_report_includes_compact_agent_results(self):
         report = format_weekly_user_report([
             {

@@ -82,26 +82,31 @@ available, then refreshes `/api/webapp/bootstrap`. Metrics act as status filters
 and the default client-side sort places problematic resources first. The cache
 is a display optimization and is never authoritative.
 
-Sites have an optional `site_group` field. Search and group filtering happen in
-the Mini App over the authenticated user's bootstrap payload. Group mutations
-verify site ownership on the server. The history endpoint also verifies
+Sites have an optional `site_group` field and normalized rows in `site_tags`.
+Search plus independent group and tag filtering happen in the Mini App over the
+authenticated user's bootstrap payload. Group and tag mutations verify site
+ownership on the server. The history endpoint also verifies
 ownership before combining relevant `events`, retained raw agent results,
 `agent_check_hourly` and `agent_check_daily` aggregates, and structured central
 incidents. Requests through seven days use hourly buckets; longer requests use
 daily buckets, up to the 90-day API limit. The UI exposes one-day, seven-day,
 and 30-day selections and renders availability plus average and peak latency.
 Availability uses observed remote-agent checks only: missing checks and checks
-omitted during a pause are excluded from the denominator. Future scheduled
-maintenance windows must record explicit intervals and use the same exclusion
-rule.
+omitted during a manual pause or active maintenance window are excluded from the
+denominator. Agent results from an explicit manual check remain observed samples
+and are included. `maintenance_windows` records start/end times, reasons,
+cancellation, and completed intervals separately from incidents.
 
 Before inserting a site, the server normalizes the URL, resolves its hostname
 with a bounded timeout, and rejects any non-global address. A full monitoring
 check is deliberately not part of insertion. DNS and TLS socket work runs in
 worker threads so it cannot block the aiohttp/aiogram event loop.
 
-Manual checks are serialized per site within the process. They run the central
-check and collect online-agent results before updating the stored status.
+Manual checks are serialized per site within the process. They remain available
+during maintenance for diagnostics, run the central check, and collect
+online-agent results before updating the stored status. Scheduled monitoring
+queries exclude manual pauses and currently active maintenance windows; future
+windows start and completed windows expire automatically through time predicates.
 Each continuous central outage creates or updates one `central_incidents` row;
 recovery closes that interval with recovery diagnostics. These intervals are
 shown alongside, but are not folded into, remote-agent availability because
@@ -125,6 +130,8 @@ response through the same bot before recording it as an administrator message.
 | `11003` | `/api/webapp/sites` | Telegram `initData` | Add a site |
 | `11003` | `/api/webapp/sites/{id}/*` | Telegram `initData` + ownership | Check or mutate a site |
 | `11003` | `/api/webapp/sites/{id}/history` | Telegram `initData` + ownership | Resource history and aggregates |
+| `11003` | `/api/webapp/sites/{id}/tags` | Telegram `initData` + ownership | Replace resource tags |
+| `11003` | `/api/webapp/sites/{id}/maintenance/*` | Telegram `initData` + ownership | Schedule, list, or cancel maintenance |
 | `11003` | `/api/webapp/feedback/start` | Telegram `initData` | Start a persisted bot feedback session |
 | `11003` | `/admin/*` | Admin token cookie/query | Operator console |
 | `11003` | `/admin/sites` | Admin token cookie/query | Searchable cross-user resource registry |
@@ -226,6 +233,12 @@ entry with the expected index name.
 outage, including start and recovery diagnostics. A partial unique index permits
 only one open incident per site. The current incident fields on `sites` remain
 as compatibility state for existing scheduler and notification behavior.
+
+`site_tags` stores multiple labels per resource with cascade deletion.
+`maintenance_windows` stores scheduled, active, completed, and cancelled planned
+intervals. Overlapping non-cancelled windows for one resource are rejected by the
+repository transaction. Weekly reports include windows overlapping the previous
+seven days and distinguish currently active maintenance from manual pauses.
 
 The central application uses a bounded `ThreadedConnectionPool`. Legacy
 `bot.infra.db` functions and signatures are preserved by compatibility

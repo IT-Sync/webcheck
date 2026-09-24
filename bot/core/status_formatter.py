@@ -230,15 +230,29 @@ def status_has_expiry_warning(status):
 
 def weekly_report_summary_lines(rows, title):
     total = len(rows)
-    paused = sum(1 for row in rows if row.get("is_paused"))
-    problems = sum(1 for row in rows if status_has_problem(row.get("last_status")))
-    expiry = sum(1 for row in rows if status_has_expiry_warning(row.get("last_status")))
+    paused = sum(1 for row in rows if row.get("is_paused") and not row.get("is_maintenance"))
+    maintenance = sum(1 for row in rows if row.get("is_maintenance"))
+    maintenance_windows = sum(row.get("maintenance_count_7d", 0) for row in rows)
+    active = sum(1 for row in rows if not row.get("is_paused") and not row.get("is_maintenance"))
+    problems = sum(
+        1 for row in rows
+        if not row.get("is_paused")
+        and not row.get("is_maintenance")
+        and status_has_problem(row.get("last_status"))
+    )
+    expiry = sum(
+        1 for row in rows
+        if not row.get("is_maintenance")
+        and status_has_expiry_warning(row.get("last_status"))
+    )
 
     return [
         title,
         f"Всего ресурсов: {total}",
-        f"Активных: {total - paused}",
+        f"Активных: {active}",
         f"На паузе: {paused}",
+        f"Плановое обслуживание сейчас: {maintenance}",
+        f"Плановых окон за 7 дней: {maintenance_windows}",
         f"С проблемами или без актуальной проверки: {problems}",
         f"SSL/домен истекают скоро: {expiry}",
     ]
@@ -247,7 +261,7 @@ def weekly_report_summary_lines(rows, title):
 def format_weekly_resource_lines(rows):
     lines = []
     for row in rows:
-        marker = "⏸" if row.get("is_paused") else ("⚠️" if status_has_problem(row.get("last_status")) else "✅")
+        marker = "🛠" if row.get("is_maintenance") else ("⏸" if row.get("is_paused") else ("⚠️" if status_has_problem(row.get("last_status")) else "✅"))
         checked = row.get("last_checked")
         checked_text = checked.strftime("%Y-%m-%d %H:%M") if checked else "не проверялся"
         status = row.get("last_status") or "статус ещё не получен"
@@ -255,6 +269,20 @@ def format_weekly_resource_lines(rows):
         compact_agent_results = format_agent_results_compact(row.get("agent_results"))
         lines.append(f"{marker} {row['url']}")
         lines.append(f"   {compact_status}")
+        if row.get("maintenance_count_7d"):
+            lines.append(f"   Плановых окон за неделю: {row['maintenance_count_7d']}")
+        if row.get("is_maintenance"):
+            until = row.get("maintenance_ends_at")
+            until_text = until.strftime("%Y-%m-%d %H:%M UTC") if until else "нет данных"
+            reason = row.get("maintenance_reason") or "без описания"
+            lines.append(f"   Плановое обслуживание до {until_text}: {reason}")
+        metadata = []
+        if row.get("site_group"):
+            metadata.append(f"группа: {row['site_group']}")
+        if row.get("tags"):
+            metadata.append("теги: " + ", ".join(row["tags"]))
+        if metadata:
+            lines.append("   " + " · ".join(metadata))
         if compact_agent_results:
             lines.append(f"   Агенты: {compact_agent_results}")
         lines.append(f"   Последняя проверка: {checked_text}")

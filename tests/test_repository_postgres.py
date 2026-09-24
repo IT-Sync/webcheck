@@ -174,6 +174,76 @@ class PostgreSQLRepositoryIntegrationTest(unittest.TestCase):
                     db.get_site_for_user(site_id, 987654321)[3],
                     "https://repository.example",
                 )
+                self.assertTrue(
+                    db.set_site_tags_by_id(
+                        site_id, 987654321, ["api", "critical"]
+                    )
+                )
+                site_payload_row = next(
+                    row for row in db.get_sites_with_pause(987654321)
+                    if row[0] == site_id
+                )
+                self.assertEqual(list(site_payload_row[12]), ["api", "critical"])
+
+                maintenance_started = datetime.utcnow() - timedelta(minutes=5)
+                maintenance_ends = datetime.utcnow() + timedelta(minutes=55)
+                maintenance_id = db.create_maintenance_window(
+                    site_id, 987654321, maintenance_started,
+                    maintenance_ends, "Database migration",
+                )
+                self.assertIsInstance(maintenance_id, int)
+                with self.assertRaisesRegex(ValueError, "maintenance_window_overlap"):
+                    db.create_maintenance_window(
+                        site_id, 987654321, datetime.utcnow(),
+                        datetime.utcnow() + timedelta(minutes=10), "overlap",
+                    )
+                self.assertNotIn(
+                    site_id, [row[0] for row in db.get_all_site_checks()]
+                )
+                report_site = next(
+                    row for row in db.get_report_sites(987654321)
+                    if row["id"] == site_id
+                )
+                self.assertTrue(report_site["is_maintenance"])
+                self.assertEqual(report_site["tags"], ["api", "critical"])
+                admin_site = next(
+                    row for row in db.get_admin_sites(987654321)
+                    if row["id"] == site_id
+                )
+                self.assertTrue(admin_site["is_maintenance"])
+                self.assertEqual(admin_site["tags"], ["api", "critical"])
+                maintenance_history = db.get_site_history_for_user(
+                    site_id, 987654321, days=1
+                )
+                self.assertEqual(
+                    maintenance_history["summary"]["maintenance_windows"], 1
+                )
+                self.assertGreater(
+                    maintenance_history["summary"]["maintenance_seconds"], 0
+                )
+                self.assertFalse(
+                    db.cancel_maintenance_window(
+                        maintenance_id, site_id, 111111111
+                    )
+                )
+                self.assertTrue(
+                    db.cancel_maintenance_window(
+                        maintenance_id, site_id, 987654321
+                    )
+                )
+                self.assertIn(
+                    site_id, [row[0] for row in db.get_all_site_checks()]
+                )
+                db.create_maintenance_window(
+                    site_id, 987654321,
+                    datetime.utcnow() - timedelta(hours=2),
+                    datetime.utcnow() - timedelta(hours=1),
+                    "Completed maintenance",
+                )
+                self.assertIn(
+                    site_id, [row[0] for row in db.get_all_site_checks()]
+                )
+
                 db.log_agent_check_result({
                     "job_id": "history-test",
                     "agent_id": "moscow-1",
@@ -223,7 +293,10 @@ class PostgreSQLRepositoryIntegrationTest(unittest.TestCase):
                 self.assertTrue(
                     db.set_site_paused_by_id(site_id, 987654321, True)
                 )
-                self.assertTrue(db.get_sites_with_pause(987654321)[0][6])
+                self.assertTrue(next(
+                    row for row in db.get_sites_with_pause(987654321)
+                    if row[0] == site_id
+                )[6])
                 self.assertTrue(db.delete_site_by_id(site_id, 987654321))
             finally:
                 db.repository.close()

@@ -1,6 +1,6 @@
 # Project Memory
 
-Last updated: 2026-09-23
+Last updated: 2026-09-24
 
 ## Current State
 
@@ -29,10 +29,11 @@ Current behavior:
 - validates signed Telegram `initData` on every API request;
 - verifies site ownership for every mutation;
 - supports add, delete, pause, resume, and manual check operations;
-- provides status-counter filters, domain/group search, group filtering, and
-  problem-first, name, or recent sorting;
-- supports optional resource groups and selectable one-day, seven-day, and
-  30-day history views; the authenticated API accepts periods from one to 90
+- provides status-counter filters, domain/group/tag search, independent group
+  and tag filtering, and problem-first, name, or recent sorting;
+- supports optional resource groups, up to eight tags per resource, and
+  selectable one-day, seven-day, and 30-day history views; the authenticated
+  API accepts periods from one to 90
   days, uses hourly buckets through seven days and daily buckets after that,
   and combines raw, hourly, and daily agent aggregates with monitoring events
   and durable central incidents;
@@ -56,8 +57,9 @@ HTTP outage alerts use a configurable consecutive-failure threshold and an
 optional central confirmation request. Remote-agent results are then appended
 to the alert for context, but they do not currently decide whether the global
 outage alert is sent. Incident alert actions support an immediate check, history
-view, and a one-hour monitoring pause that expires automatically. Arbitrary or
-scheduled maintenance windows are not implemented.
+view, and a one-hour maintenance window. Users can also schedule arbitrary future
+maintenance windows with explicit start/end times and reasons, cancel active or
+future windows, and retain completed intervals for history and reports.
 
 Each continuous centrally detected outage is stored as a structured incident
 with start and recovery diagnostics and the failure count observed when the
@@ -112,14 +114,15 @@ rebuilt concurrently.
 
 Availability is calculated only from observed remote-agent checks. Missing
 checks are excluded from the denominator rather than treated as success or
-failure. Pauses suppress checks, so their absent samples are also excluded.
-Future planned-maintenance windows must follow the same exclusion rule and
-record their intervals explicitly so the UI can distinguish them from outages.
+failure. Manual pauses and active maintenance windows suppress scheduled central
+and remote-agent checks, so their absent samples are excluded. Manual checks remain available during maintenance for diagnostics; any agent
+results they produce remain observed samples and are included in availability.
+Maintenance intervals are shown separately from central incidents in history and weekly reports.
 
 The administrative console uses the same dark control-room visual language as
 the Mini App. Its dedicated `/admin/sites` registry lists every customer's
 resource in problem-first order and supports immediate search by domain,
-username, Telegram user ID, or group plus status filtering and direct owner
+username, Telegram user ID, group, or tag plus status filtering and direct owner
 navigation. Other administrative tables retain page-level search. Every
 non-empty data-table column can be sorted in either direction by mouse or
 keyboard, with type-aware ordering for numbers, timestamps, and text.
@@ -155,19 +158,18 @@ migrations. Back up PostgreSQL before major releases.
 
 ## Planned Development
 
-The product backlog in `TODO.md` covers tags, full maintenance windows,
-automatic global-versus-regional classification, monitoring-health alerts,
-multi-agent incident confirmation, acknowledgement, notification preferences,
-bulk operations, public status pages, content/API checks, DNS changes, and team
-access. Some foundations exist as documented above, but these extensions are
-not yet implemented. The proposed next sequence is maintenance windows and
-public status pages.
+The product backlog in `TODO.md` covers automatic global-versus-regional
+classification, monitoring-health alerts, multi-agent incident confirmation,
+acknowledgement, notification preferences, bulk operations, public status pages,
+content/API checks, DNS changes, and team access. Some foundations exist as
+documented above, but these extensions are not yet implemented. The proposed
+next sequence is regional classification and public status pages.
 
 ## Validation Baseline
 
-The current suite contains 61 `unittest` tests. The standard run passes 56 and
+The current suite contains 62 `unittest` tests. The standard run passes 57 and
 skips five PostgreSQL integration tests unless `TEST_DATABASE_URL` points to a
-disposable database; all 61 pass when that database is provided.
+disposable database; all 62 pass when that database is provided.
 
 ```bash
 python -m unittest discover -s tests -v

@@ -56,6 +56,8 @@ def fmt_dt(value) -> str:
 
 
 def admin_site_status(site: dict) -> tuple[str, str]:
+    if site.get("is_maintenance"):
+        return "maintenance", "Обслуживание"
     if site["is_paused"]:
         return "paused", "На паузе"
     status = site.get("last_status") or ""
@@ -66,6 +68,15 @@ def admin_site_status(site: dict) -> tuple[str, str]:
     if status:
         return "warning", "Внимание"
     return "pending", "Ожидает"
+
+
+def admin_tags(site: dict) -> str:
+    tags = site.get("tags") or []
+    if not tags:
+        return '<span class="muted">—</span>'
+    return " ".join(
+        f'<span class="group-chip">#{esc(tag)}</span>' for tag in tags
+    )
 
 
 def feedback_badge(item: dict) -> str:
@@ -649,7 +660,7 @@ async def users(request: web.Request) -> web.Response:
 @require_auth
 async def sites(request: web.Request) -> web.Response:
     rows = get_admin_sites()
-    priority = {"down": 0, "warning": 1, "pending": 2, "up": 3, "paused": 4}
+    priority = {"down": 0, "warning": 1, "pending": 2, "up": 3, "maintenance": 4, "paused": 5}
     decorated_rows = [(*admin_site_status(site), site) for site in rows]
     decorated_rows.sort(
         key=lambda item: (
@@ -663,6 +674,7 @@ async def sites(request: web.Request) -> web.Response:
         "down": "status-bad",
         "warning": "status-warning",
         "paused": "status-muted",
+        "maintenance": "status-warning",
         "pending": "status-muted",
     }
     table_rows = "".join(
@@ -670,6 +682,7 @@ async def sites(request: web.Request) -> web.Response:
   <td><span class="site-address">{esc(site['url'])}</span></td>
   <td><div class="site-owner"><a href="/admin/users/{site['user_id']}">{esc('@' + site['username'] if site['username'] else 'без username')}</a><small>User ID: {site['user_id']}</small></div></td>
   <td>{f'<span class="group-chip">{esc(site["site_group"])}</span>' if site['site_group'] else '<span class="muted">—</span>'}</td>
+  <td>{admin_tags(site)}</td>
   <td><span class="{status_classes[status_kind]}">{status_label}</span></td>
   <td>{fmt_dt(site['last_checked'])}</td>
   <td class="hide-sm">{esc((site['last_status'] or 'нет данных')[:180])}</td>
@@ -689,7 +702,7 @@ async def sites(request: web.Request) -> web.Response:
   <div class="registry-total">{len(rows)}<small>ресурсов</small></div>
 </div>
 <section class="registry-tools" aria-label="Поиск и фильтры ресурсов">
-  <label>Поиск<input id="site-registry-search" type="search" placeholder="Домен, username, User ID или группа" autocomplete="off" autofocus></label>
+  <label>Поиск<input id="site-registry-search" type="search" placeholder="Домен, username, User ID, группа или тег" autocomplete="off" autofocus></label>
   <label>Состояние<select id="site-registry-status">
     <option value="all">Все состояния</option>
     <option value="attention">Требуют внимания</option>
@@ -697,12 +710,13 @@ async def sites(request: web.Request) -> web.Response:
     <option value="up">В сети</option>
     <option value="pending">Ожидают проверки</option>
     <option value="paused">На паузе</option>
+    <option value="maintenance">Обслуживание</option>
   </select></label>
   <div class="registry-count" id="site-registry-count">{len(rows)} из {len(rows)}</div>
 </section>
 <div style="overflow-x:auto">
   <table id="site-registry">
-    <thead><tr><th>Ресурс</th><th>Владелец</th><th>Группа</th><th>Состояние</th><th>Проверка</th><th class="hide-sm">Последний результат</th><th></th></tr></thead>
+    <thead><tr><th>Ресурс</th><th>Владелец</th><th>Группа</th><th>Теги</th><th>Состояние</th><th>Проверка</th><th class="hide-sm">Последний результат</th><th></th></tr></thead>
     <tbody>{table_rows}</tbody>
   </table>
 </div>
@@ -869,8 +883,8 @@ async def user_detail(request: web.Request) -> web.Response:
     site_rows = "".join(
         f"""<tr>
   <td>{esc(site['url'])}</td>
-  <td>{esc(site['site_group'] or '—')}</td>
-  <td>{'<span class="status-bad">пауза</span>' if site['is_paused'] else '<span class="status-ok">активен</span>'}</td>
+  <td>{esc(site['site_group'] or '—')}<br>{admin_tags(site)}</td>
+  <td>{'<span class="status-warning">обслуживание</span>' if site.get('is_maintenance') else ('<span class="status-bad">пауза</span>' if site['is_paused'] else '<span class="status-ok">активен</span>')}</td>
   <td>{fmt_dt(site['last_checked'])}</td>
   <td>{esc((site['last_status'] or 'нет данных')[:240])}</td>
   <td class="actions">

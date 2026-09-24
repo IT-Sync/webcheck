@@ -12,7 +12,7 @@ from bot.infra.db import (
     update_site_status, update_site_status_by_id, delete_user_data,
     get_site_for_user, get_site_by_id, delete_site_by_id,
     admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
-    set_site_paused_until_by_id, get_site_pause_status,
+    get_site_pause_status, create_maintenance_window,
     add_user_feedback_message, cancel_feedback_waiting,
     is_feedback_waiting, start_feedback_waiting
 )
@@ -442,7 +442,15 @@ async def inline_pause_one_hour(query: types.CallbackQuery):
         return await query.answer("❌ Сайт не найден", show_alert=True)
 
     paused_until = datetime.utcnow() + timedelta(hours=1)
-    set_site_paused_until_by_id(site_id, query.from_user.id, paused_until)
+    try:
+        create_maintenance_window(
+            site_id, query.from_user.id, datetime.utcnow(), paused_until,
+            "Incident alert pause",
+        )
+    except ValueError:
+        return await query.answer(
+            "Окно пересекается с уже запланированным", show_alert=True
+        )
     log_user_action(query.from_user.id, f"Пауза 1 час из алерта: {site[3]}", query.from_user.username)
     await query.message.answer(
         f"⏸ Мониторинг поставлен на паузу до {paused_until.strftime('%H:%M UTC')}: {site[3]}",

@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 
@@ -10,17 +10,17 @@ from bot.agent_server.checks import check_with_agents
 from bot.checks.service import check_resource
 from bot.core.status_formatter import append_agent_results, format_status_text
 from bot.infra.db import (
-    add_site,
+    add_site, cancel_maintenance_window, create_maintenance_window,
     delete_site_by_id,
     get_site_by_url_for_user,
     get_site_for_user,
-    get_site_history_for_user,
+    get_site_history_for_user, get_maintenance_windows_for_site,
     get_sites_with_pause,
     log_user_action,
     start_feedback_waiting,
     cancel_feedback_waiting,
     set_site_paused_by_id,
-    set_site_group_by_id,
+    set_site_group_by_id, set_site_tags_by_id,
     update_site_status_by_id,
 )
 from bot.webapp.auth import TelegramAuthError, validate_init_data
@@ -74,7 +74,9 @@ def _iso(value):
     return value.isoformat() + "Z" if isinstance(value, datetime) else None
 
 
-def _status_kind(status: str | None, paused: bool) -> str:
+def _status_kind(status: str | None, paused: bool, maintenance: bool = False) -> str:
+    if maintenance:
+        return "maintenance"
     if paused:
         return "paused"
     if not status:
@@ -88,14 +90,20 @@ def _status_kind(status: str | None, paused: bool) -> str:
 
 def _site_payload(row: tuple) -> dict:
     paused = bool(row[6])
+    maintenance = bool(row[8]) if len(row) > 8 else False
     return {
         "id": row[0],
         "url": row[3],
         "last_status": row[4],
         "last_checked": _iso(row[5]),
         "is_paused": paused,
-        "status_kind": _status_kind(row[4], paused),
+        "is_maintenance": maintenance,
+        "status_kind": _status_kind(row[4], paused, maintenance),
         "site_group": row[7] if len(row) > 7 else "",
+        "maintenance_starts_at": _iso(row[9]) if len(row) > 9 else None,
+        "maintenance_ends_at": _iso(row[10]) if len(row) > 10 else None,
+        "maintenance_reason": row[11] if len(row) > 11 else "",
+        "tags": list(row[12] or []) if len(row) > 12 else [],
     }
 
 
@@ -108,6 +116,46 @@ def _clean_group(value) -> str:
     if len(group) > 40:
         raise ValueError("Название группы не должно превышать 40 символов")
     return group
+
+
+def _clean_tags(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        values = value.split(",")
+    elif isinstance(value, list):
+        values = value
+    else:
+        raise ValueError("Теги должны быть строкой или списком")
+    tags = []
+    seen = set()
+    for raw_tag in values:
+        if not isinstance(raw_tag, str):
+            raise ValueError("Каждый тег должен быть строкой")
+        tag = " ".join(raw_tag.strip().split())
+        if not tag:
+            continue
+        if len(tag) > 24:
+            raise ValueError("Тег не должен превышать 24 символа")
+        key = tag.casefold()
+        if key not in seen:
+            tags.append(tag)
+            seen.add(key)
+    if len(tags) > 8:
+        raise ValueError("Можно указать не более 8 тегов")
+    return tags
+
+
+def _parse_utc(value, field_name):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Поле {field_name} обязательно")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"Некорректное значение {field_name}") from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
 
 
 def _site_payload_for_user(site_id: int, user_id: int) -> dict | None:
@@ -214,14 +262,16 @@ async def create_site(request: web.Request) -> web.Response:
         return _json_error(str(exc), code="invalid_target")
     try:
         site_group = _clean_group(data.get("site_group", ""))
+        tags = _clean_tags(data.get("tags", []))
     except ValueError as exc:
-        return _json_error(str(exc), code="invalid_group")
+        return _json_error(str(exc), code="invalid_metadata")
 
     existing = get_site_by_url_for_user(user.id, url)
     if existing:
         return _json_error("Этот сайт уже добавлен", status=409, code="duplicate")
 
     site_id = add_site(user.id, url, user.username, site_group)
+    set_site_tags_by_id(site_id, user.id, tags)
     log_user_action(user.id, f"Mini App: added site {url}", user.username)
     site = _site_payload_for_user(site_id, user.id)
     return web.json_response({"ok": True, "site": site}, status=201)
@@ -288,6 +338,81 @@ async def update_site_group(request: web.Request) -> web.Response:
 
 
 @require_telegram_user
+async def update_site_tags(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    site = _owned_site(request)
+    if not site:
+        return _json_error("Сайт не найден", status=404, code="not_found")
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise ValueError("Ожидался JSON-объект")
+        tags = _clean_tags(data.get("tags", []))
+    except (ValueError, TypeError, AttributeError) as exc:
+        return _json_error(str(exc), code="invalid_tags")
+    set_site_tags_by_id(site[0], user.id, tags)
+    log_user_action(user.id, f"Mini App: changed tags for {site[3]} to {tags}", user.username)
+    return web.json_response({"ok": True, "site": _site_payload_for_user(site[0], user.id)})
+
+
+@require_telegram_user
+async def list_maintenance_windows(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    site = _owned_site(request)
+    if not site:
+        return _json_error("Сайт не найден", status=404, code="not_found")
+    windows = get_maintenance_windows_for_site(site[0], user.id)
+    for window in windows:
+        for key in ("starts_at", "ends_at", "created_at", "cancelled_at"):
+            window[key] = _iso(window[key])
+    return web.json_response({"ok": True, "maintenance_windows": windows})
+
+
+@require_telegram_user
+async def create_site_maintenance(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    site = _owned_site(request)
+    if not site:
+        return _json_error("Сайт не найден", status=404, code="not_found")
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise ValueError("Ожидался JSON-объект")
+        starts_at = _parse_utc(data.get("starts_at"), "starts_at")
+        ends_at = _parse_utc(data.get("ends_at"), "ends_at")
+        reason = " ".join(str(data.get("reason") or "").strip().split())
+        if ends_at <= starts_at:
+            raise ValueError("Окончание должно быть позже начала")
+        if ends_at <= datetime.utcnow():
+            raise ValueError("Окно обслуживания уже завершилось")
+        if len(reason) > 160:
+            raise ValueError("Описание не должно превышать 160 символов")
+        window_id = create_maintenance_window(site[0], user.id, starts_at, ends_at, reason)
+    except ValueError as exc:
+        if str(exc) == "maintenance_window_overlap":
+            return _json_error("Окно пересекается с уже запланированным", status=409, code="maintenance_overlap")
+        return _json_error(str(exc), code="invalid_maintenance")
+    log_user_action(user.id, f"Mini App: scheduled maintenance for {site[3]}", user.username)
+    return web.json_response({"ok": True, "maintenance_window_id": window_id, "site": _site_payload_for_user(site[0], user.id)}, status=201)
+
+
+@require_telegram_user
+async def cancel_site_maintenance(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    site = _owned_site(request)
+    if not site:
+        return _json_error("Сайт не найден", status=404, code="not_found")
+    try:
+        window_id = int(request.match_info["window_id"])
+    except (KeyError, ValueError):
+        return _json_error("Некорректное окно обслуживания")
+    if not cancel_maintenance_window(window_id, site[0], user.id):
+        return _json_error("Окно не найдено или уже завершено", status=404, code="not_found")
+    log_user_action(user.id, f"Mini App: cancelled maintenance for {site[3]}", user.username)
+    return web.json_response({"ok": True, "site": _site_payload_for_user(site[0], user.id)})
+
+
+@require_telegram_user
 async def site_history(request: web.Request) -> web.Response:
     user = request["telegram_user"]
     try:
@@ -303,6 +428,9 @@ async def site_history(request: web.Request) -> web.Response:
     for incident in history["incidents"]:
         incident["started_at"] = _iso(incident["started_at"])
         incident["ended_at"] = _iso(incident["ended_at"])
+    for window in history["maintenance_windows"]:
+        window["starts_at"] = _iso(window["starts_at"])
+        window["ends_at"] = _iso(window["ends_at"])
     for event in history["events"]:
         event["created_at"] = _iso(event["created_at"])
     return web.json_response({"ok": True, "history": history})
@@ -367,5 +495,9 @@ def setup_webapp_routes(app: web.Application) -> None:
     app.router.add_post("/api/webapp/sites/{site_id:\\d+}/pause", pause_site)
     app.router.add_post("/api/webapp/sites/{site_id:\\d+}/resume", resume_site)
     app.router.add_post("/api/webapp/sites/{site_id:\\d+}/group", update_site_group)
+    app.router.add_post("/api/webapp/sites/{site_id:\\d+}/tags", update_site_tags)
+    app.router.add_get("/api/webapp/sites/{site_id:\\d+}/maintenance", list_maintenance_windows)
+    app.router.add_post("/api/webapp/sites/{site_id:\\d+}/maintenance", create_site_maintenance)
+    app.router.add_delete("/api/webapp/sites/{site_id:\\d+}/maintenance/{window_id:\\d+}", cancel_site_maintenance)
     app.router.add_get("/api/webapp/sites/{site_id:\\d+}/history", site_history)
     app.router.add_delete("/api/webapp/sites/{site_id:\\d+}", delete_site)

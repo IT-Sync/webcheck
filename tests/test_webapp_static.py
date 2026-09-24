@@ -3,6 +3,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SERVER = ROOT / "bot" / "webapp" / "server.py"
 INDEX = ROOT / "bot" / "webapp" / "static" / "index.html"
 SCRIPT = ROOT / "bot" / "webapp" / "static" / "app.js"
 
@@ -19,8 +20,8 @@ class WebAppStaticMarkupTest(unittest.TestCase):
     def test_frontend_assets_have_cache_busting_version(self):
         source = INDEX.read_text(encoding="utf-8")
 
-        self.assertIn("/app/static/app.css?v=9", source)
-        self.assertIn("/app/static/app.js?v=9", source)
+        self.assertIn("/app/static/app.css?v=10", source)
+        self.assertIn("/app/static/app.js?v=10", source)
 
     def test_status_metrics_are_filter_controls(self):
         source = INDEX.read_text(encoding="utf-8")
@@ -30,6 +31,7 @@ class WebAppStaticMarkupTest(unittest.TestCase):
         self.assertIn('value="priority"', source)
         self.assertIn('id="site-search"', source)
         self.assertIn('id="group-select"', source)
+        self.assertIn('id="tag-select"', source)
 
     def test_history_dialog_and_actions_are_available(self):
         markup = INDEX.read_text(encoding="utf-8")
@@ -42,11 +44,22 @@ class WebAppStaticMarkupTest(unittest.TestCase):
         self.assertIn('id="history-incidents"', markup)
         self.assertIn('data-action="history"', markup)
         self.assertIn('data-action="group"', markup)
+        self.assertIn('data-action="tags"', markup)
+        self.assertIn('data-action="maintenance"', markup)
+        self.assertIn('id="maintenance-dialog"', markup)
+        self.assertIn('id="history-maintenance"', markup)
         script = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("history.summary.max_latency_ms", script)
         self.assertIn("historyDays: 7, historyRequest: 0,\n  };", script)
         self.assertIn("historyLatencyChart: document.querySelector", script)
         self.assertIn("historyIncidents: document.querySelector", script)
+        self.assertIn("renderTags()", script)
+        self.assertEqual(script.count("const groups ="), 1)
+        self.assertIn("submitMaintenance", script)
+        server = SERVER.read_text(encoding="utf-8")
+        self.assertIn("set_site_tags_by_id", server)
+        self.assertIn("create_site_maintenance", server)
+        self.assertIn("cancel_site_maintenance", server)
 
     def test_feedback_returns_the_user_to_the_bot(self):
         markup = INDEX.read_text(encoding="utf-8")

@@ -110,6 +110,23 @@ c.execute('''CREATE TABLE IF NOT EXISTS central_incidents (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 )''')
 
+c.execute('''CREATE TABLE IF NOT EXISTS site_tags (
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    tag TEXT NOT NULL,
+    PRIMARY KEY (site_id, tag)
+)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS maintenance_windows (
+    id BIGSERIAL PRIMARY KEY,
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    starts_at TIMESTAMP NOT NULL,
+    ends_at TIMESTAMP NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    cancelled_at TIMESTAMP,
+    CHECK (ends_at > starts_at)
+)''')
+
 c.execute('''CREATE TABLE IF NOT EXISTS feedback_conversations (
     id SERIAL PRIMARY KEY,
     user_id BIGINT UNIQUE NOT NULL,
@@ -156,16 +173,38 @@ def get_sites(user_id):
     return c.fetchall()
 
 def get_sites_with_pause(user_id):
+    now = datetime.utcnow()
     c.execute(
         """
-        SELECT id, user_id, username, url, last_status, last_checked,
-               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now,
-               COALESCE(site_group, '')
-        FROM sites
-        WHERE user_id = %s
-        ORDER BY id
+        SELECT site.id, site.user_id, site.username, site.url,
+               site.last_status, site.last_checked,
+               (COALESCE(site.is_paused, FALSE)
+                OR (site.paused_until IS NOT NULL AND site.paused_until > %s)
+                OR maintenance.id IS NOT NULL) AS is_paused_now,
+               COALESCE(site.site_group, ''),
+               maintenance.id IS NOT NULL AS is_maintenance,
+               maintenance.starts_at, maintenance.ends_at, maintenance.reason,
+               COALESCE(tags.values, ARRAY[]::text[])
+        FROM sites AS site
+        LEFT JOIN LATERAL (
+            SELECT mw.id, mw.starts_at, mw.ends_at, mw.reason
+            FROM maintenance_windows AS mw
+            WHERE mw.site_id = site.id
+              AND mw.cancelled_at IS NULL
+              AND mw.starts_at <= %s
+              AND mw.ends_at > %s
+            ORDER BY mw.ends_at
+            LIMIT 1
+        ) AS maintenance ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT ARRAY_AGG(tag ORDER BY LOWER(tag), tag) AS values
+            FROM site_tags
+            WHERE site_id = site.id
+        ) AS tags ON TRUE
+        WHERE site.user_id = %s
+        ORDER BY site.id
         """,
-        (datetime.utcnow(), user_id)
+        (now, now, now, user_id),
     )
     return c.fetchall()
 
@@ -222,6 +261,104 @@ def set_site_group_by_id(site_id, user_id, site_group):
     conn.commit()
     return c.rowcount > 0
 
+
+def set_site_tags_by_id(site_id, user_id, tags):
+    try:
+        c.execute(
+            "SELECT 1 FROM sites WHERE id = %s AND user_id = %s FOR UPDATE",
+            (site_id, user_id),
+        )
+        if not c.fetchone():
+            conn.rollback()
+            return False
+        c.execute("DELETE FROM site_tags WHERE site_id = %s", (site_id,))
+        for tag in tags:
+            c.execute(
+                "INSERT INTO site_tags (site_id, tag) VALUES (%s, %s)",
+                (site_id, tag),
+            )
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def create_maintenance_window(site_id, user_id, starts_at, ends_at, reason=""):
+    try:
+        c.execute(
+            "SELECT 1 FROM sites WHERE id = %s AND user_id = %s FOR UPDATE",
+            (site_id, user_id),
+        )
+        if not c.fetchone():
+            conn.rollback()
+            return None
+        c.execute(
+            """
+            SELECT 1 FROM maintenance_windows
+            WHERE site_id = %s AND cancelled_at IS NULL
+              AND starts_at < %s AND ends_at > %s
+            LIMIT 1
+            """,
+            (site_id, ends_at, starts_at),
+        )
+        if c.fetchone():
+            conn.rollback()
+            raise ValueError("maintenance_window_overlap")
+        c.execute(
+            """
+            INSERT INTO maintenance_windows (site_id, starts_at, ends_at, reason)
+            VALUES (%s, %s, %s, %s) RETURNING id
+            """,
+            (site_id, starts_at, ends_at, reason),
+        )
+        window_id = c.fetchone()[0]
+        conn.commit()
+        return window_id
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def cancel_maintenance_window(window_id, site_id, user_id, cancelled_at=None):
+    now = cancelled_at or datetime.utcnow()
+    c.execute(
+        """
+        UPDATE maintenance_windows AS mw
+        SET cancelled_at = %s
+        FROM sites AS site
+        WHERE mw.id = %s AND mw.site_id = %s
+          AND mw.site_id = site.id AND site.user_id = %s
+          AND mw.cancelled_at IS NULL AND mw.ends_at > %s
+        """,
+        (now, window_id, site_id, user_id, now),
+    )
+    conn.commit()
+    return c.rowcount > 0
+
+
+def get_maintenance_windows_for_site(site_id, user_id, since=None):
+    since = since or datetime.utcnow()
+    c.execute(
+        """
+        SELECT mw.id, mw.starts_at, mw.ends_at, mw.reason,
+               mw.created_at, mw.cancelled_at
+        FROM maintenance_windows AS mw
+        JOIN sites AS site ON site.id = mw.site_id
+        WHERE mw.site_id = %s AND site.user_id = %s
+          AND mw.ends_at >= %s AND mw.cancelled_at IS NULL
+        ORDER BY mw.starts_at, mw.id
+        """,
+        (site_id, user_id, since),
+    )
+    return [
+        {
+            "id": row[0], "starts_at": row[1], "ends_at": row[2],
+            "reason": row[3], "created_at": row[4], "cancelled_at": row[5],
+        }
+        for row in c.fetchall()
+    ]
+
 def set_site_paused(user_id, url, paused):
     if paused:
         c.execute(
@@ -237,12 +374,22 @@ def set_site_paused(user_id, url, paused):
     return c.rowcount > 0
 
 def get_site_pause_status(site_id):
-    c.execute("SELECT is_paused, paused_until FROM sites WHERE id = %s", (site_id,))
+    now = datetime.utcnow()
+    c.execute(
+        """
+        SELECT COALESCE(is_paused, FALSE)
+               OR (paused_until IS NOT NULL AND paused_until > %s)
+               OR EXISTS (
+                   SELECT 1 FROM maintenance_windows
+                   WHERE site_id = sites.id AND cancelled_at IS NULL
+                     AND starts_at <= %s AND ends_at > %s
+               )
+        FROM sites WHERE id = %s
+        """,
+        (now, now, now, site_id),
+    )
     row = c.fetchone()
-    if not row:
-        return False
-    paused_until = row[1]
-    return bool(row[0]) or (paused_until is not None and paused_until > datetime.utcnow())
+    return bool(row and row[0])
 
 def admin_delete_site_by_id(site_id):
     c.execute("DELETE FROM sites WHERE id = %s", (site_id,))
@@ -658,18 +805,22 @@ def get_admin_stats():
     users_with_sites, site_count = c.fetchone()
     c.execute("SELECT COUNT(DISTINCT user_id), COUNT(*) FROM user_logs WHERE created_at > %s", (datetime.utcnow() - timedelta(days=14),))
     active_users_14d, logs_14d = c.fetchone()
+    now = datetime.utcnow()
     c.execute("""
-        SELECT
-            COUNT(*) FILTER (
-                WHERE COALESCE(is_paused, FALSE) = FALSE
-                  AND (paused_until IS NULL OR paused_until <= %s)
-            ),
-            COUNT(*) FILTER (
-                WHERE COALESCE(is_paused, FALSE) = TRUE
+        WITH states AS (
+            SELECT COALESCE(is_paused, FALSE)
                    OR (paused_until IS NOT NULL AND paused_until > %s)
-            )
-        FROM sites
-    """, (datetime.utcnow(), datetime.utcnow()))
+                   OR EXISTS (
+                       SELECT 1 FROM maintenance_windows
+                       WHERE site_id = sites.id AND cancelled_at IS NULL
+                         AND starts_at <= %s AND ends_at > %s
+                   ) AS is_paused_now
+            FROM sites
+        )
+        SELECT COUNT(*) FILTER (WHERE NOT is_paused_now),
+               COUNT(*) FILTER (WHERE is_paused_now)
+        FROM states
+    """, (now, now, now))
     active_sites, paused_sites = c.fetchone()
     c.execute("SELECT COUNT(*) FROM events WHERE created_at > %s", (datetime.utcnow() - timedelta(days=14),))
     events_14d = c.fetchone()[0]
@@ -774,69 +925,109 @@ def get_admin_bot_response_stats(days=14):
     ]
 
 def get_admin_sites(user_id=None):
-    params = [datetime.utcnow()]
+    now = datetime.utcnow()
+    params = [now, now, now]
     where = ""
     if user_id is not None:
-        where = "WHERE user_id = %s"
+        where = "WHERE site.user_id = %s"
         params.append(user_id)
     c.execute(f"""
-        SELECT id, user_id, username, url, last_status, last_checked,
-               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now,
-               COALESCE(site_group, '')
-        FROM sites
+        SELECT site.id, site.user_id, site.username, site.url,
+               site.last_status, site.last_checked,
+               (COALESCE(site.is_paused, FALSE)
+                OR (site.paused_until IS NOT NULL AND site.paused_until > %s)),
+               COALESCE(site.site_group, ''), maintenance.id IS NOT NULL,
+               maintenance.starts_at, maintenance.ends_at, maintenance.reason,
+               COALESCE(tags.values, ARRAY[]::text[])
+        FROM sites AS site
+        LEFT JOIN LATERAL (
+            SELECT mw.id, mw.starts_at, mw.ends_at, mw.reason
+            FROM maintenance_windows AS mw
+            WHERE mw.site_id = site.id AND mw.cancelled_at IS NULL
+              AND mw.starts_at <= %s AND mw.ends_at > %s
+            ORDER BY mw.ends_at LIMIT 1
+        ) AS maintenance ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT ARRAY_AGG(tag ORDER BY LOWER(tag), tag) AS values
+            FROM site_tags WHERE site_id = site.id
+        ) AS tags ON TRUE
         {where}
-        ORDER BY user_id, id
+        ORDER BY site.user_id, site.id
     """, tuple(params))
     return [
         {
-            "id": row[0],
-            "user_id": row[1],
-            "username": row[2],
-            "url": row[3],
-            "last_status": row[4],
-            "last_checked": row[5],
-            "is_paused": row[6],
-            "site_group": row[7],
+            "id": row[0], "user_id": row[1], "username": row[2],
+            "url": row[3], "last_status": row[4], "last_checked": row[5],
+            "is_paused": row[6], "site_group": row[7],
+            "is_maintenance": row[8], "maintenance_starts_at": row[9],
+            "maintenance_ends_at": row[10], "maintenance_reason": row[11],
+            "tags": list(row[12] or []),
         }
         for row in c.fetchall()
     ]
 
 def get_all_site_checks():
+    now = datetime.utcnow()
     c.execute("""
         SELECT id, user_id, url, incident_started_at, last_success_at,
                last_success_http_status, last_success_latency_ms, last_resolved_ip
         FROM sites
         WHERE COALESCE(is_paused, FALSE) = FALSE
           AND (paused_until IS NULL OR paused_until <= %s)
+          AND NOT EXISTS (
+              SELECT 1 FROM maintenance_windows
+              WHERE site_id = sites.id AND cancelled_at IS NULL
+                AND starts_at <= %s AND ends_at > %s
+          )
         ORDER BY id
-    """, (datetime.utcnow(),))
+    """, (now, now, now))
     return c.fetchall()
 
 def get_report_sites(user_id=None):
-    params = [datetime.utcnow()]
+    now = datetime.utcnow()
+    params = [now, now, now - timedelta(days=7), now, now]
     where = ""
     if user_id is not None:
-        where = "WHERE user_id = %s"
+        where = "WHERE site.user_id = %s"
         params.append(user_id)
     c.execute(f"""
-        SELECT id, user_id, username, url, last_status, last_checked,
-               (COALESCE(is_paused, FALSE) OR (paused_until IS NOT NULL AND paused_until > %s)) AS is_paused_now,
-               COALESCE(site_group, '')
-        FROM sites
+        SELECT site.id, site.user_id, site.username, site.url,
+               site.last_status, site.last_checked,
+               (COALESCE(site.is_paused, FALSE)
+                OR (site.paused_until IS NOT NULL AND site.paused_until > %s)),
+               COALESCE(site.site_group, ''),
+               maintenance.id IS NOT NULL, maintenance.starts_at,
+               maintenance.ends_at, maintenance.reason,
+               COALESCE(tags.values, ARRAY[]::text[]),
+               (SELECT COUNT(*) FROM maintenance_windows AS recent
+                WHERE recent.site_id = site.id
+                  AND recent.cancelled_at IS NULL
+                  AND recent.starts_at < %s AND recent.ends_at > %s)
+        FROM sites AS site
+        LEFT JOIN LATERAL (
+            SELECT mw.id, mw.starts_at, mw.ends_at, mw.reason
+            FROM maintenance_windows AS mw
+            WHERE mw.site_id = site.id AND mw.cancelled_at IS NULL
+              AND mw.starts_at <= %s AND mw.ends_at > %s
+            ORDER BY mw.ends_at LIMIT 1
+        ) AS maintenance ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT ARRAY_AGG(tag ORDER BY LOWER(tag), tag) AS values
+            FROM site_tags WHERE site_id = site.id
+        ) AS tags ON TRUE
         {where}
-        ORDER BY user_id, id
+        ORDER BY site.user_id, site.id
     """, tuple(params))
     rows = c.fetchall()
     return [
         {
-            "id": row[0],
-            "user_id": row[1],
-            "username": row[2],
-            "url": row[3],
-            "last_status": row[4],
-            "last_checked": row[5],
-            "is_paused": row[6],
-            "site_group": row[7],
+            "id": row[0], "user_id": row[1], "username": row[2],
+            "url": row[3], "last_status": row[4], "last_checked": row[5],
+            "is_paused": row[6], "site_group": row[7],
+            "is_maintenance": row[8], "maintenance_starts_at": row[9],
+            "maintenance_ends_at": row[10], "maintenance_reason": row[11],
+            "tags": list(row[12] or []),
+            "maintenance_count_7d": int(row[13] or 0),
         }
         for row in rows
     ]
@@ -1170,6 +1361,32 @@ def get_site_history_for_user(site_id, user_id, days=7):
 
     c.execute(
         """
+        SELECT id, starts_at, ends_at, reason
+        FROM maintenance_windows
+        WHERE site_id = %s AND cancelled_at IS NULL
+          AND starts_at <= %s AND ends_at >= %s
+        ORDER BY starts_at DESC
+        LIMIT 100
+        """,
+        (site_id, now, since),
+    )
+    maintenance_windows = []
+    maintenance_seconds = 0
+    for row in c.fetchall():
+        effective_start = max(row[1], since)
+        effective_end = min(row[2], now)
+        duration_seconds = max(
+            0, round((effective_end - effective_start).total_seconds())
+        )
+        maintenance_seconds += duration_seconds
+        maintenance_windows.append({
+            "id": row[0], "starts_at": row[1], "ends_at": row[2],
+            "reason": row[3], "duration_seconds": duration_seconds,
+            "is_active": row[1] <= now < row[2],
+        })
+
+    c.execute(
+        """
         WITH points AS (
             SELECT date_trunc(%s, created_at) AS bucket_start,
                    agent_id,
@@ -1262,7 +1479,8 @@ def get_site_history_for_user(site_id, user_id, days=7):
         "availability_policy": {
             "basis": "observed_agent_checks",
             "missing_checks": "excluded",
-            "planned_maintenance": "excluded",
+            "planned_maintenance": "scheduled_checks_suppressed",
+            "manual_checks_during_maintenance": "included_if_observed",
         },
         "summary": {
             "checks": total_checks,
@@ -1278,9 +1496,12 @@ def get_site_history_for_user(site_id, user_id, days=7):
             "events": len(events),
             "central_incidents": len(incidents),
             "central_downtime_seconds": central_downtime_seconds,
+            "maintenance_windows": len(maintenance_windows),
+            "maintenance_seconds": maintenance_seconds,
         },
         "points": points,
         "incidents": incidents,
+        "maintenance_windows": maintenance_windows,
         "events": events,
     }
 
@@ -1646,6 +1867,8 @@ def migrate_add_notification_flags():
     c.execute("CREATE INDEX IF NOT EXISTS idx_central_incidents_url_started ON central_incidents(url, started_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_events_url_created_at ON events(url, created_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sites_user_group ON sites(user_id, site_group)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_site_tags_tag ON site_tags(tag)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_maintenance_windows_site_time ON maintenance_windows(site_id, starts_at, ends_at) WHERE cancelled_at IS NULL")
     c.execute("ALTER TABLE feedback_conversations ADD COLUMN IF NOT EXISTS active_media_group_id TEXT")
     c.execute("ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS telegram_message_id BIGINT")
     c.execute("ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS media_type TEXT")

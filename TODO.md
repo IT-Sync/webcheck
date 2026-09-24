@@ -1,6 +1,6 @@
 # TODO
 
-Last updated: 2026-09-23
+Last updated: 2026-09-24
 
 This file tracks unresolved work and technical debt. Completed work should be
 removed or moved into the current-state sections of `PROJECT_MEMORY.md`; it
@@ -39,23 +39,18 @@ should not become a chronological changelog.
 
 ## Product Feature Backlog
 
-These are planned capabilities, not implemented behavior. Retention,
-hourly and daily aggregation, selectable one-day, seven-day, and 30-day resource
-history, groups, search, the searchable all-customer site registry, sortable
-administrative tables, and the feedback inbox with media support and bot replies
-are implemented. The current history includes availability, average and peak
-latency, a per-agent regional breakdown, and durable central incident intervals.
-Incident alerts also provide an auto-expiring one-hour pause. Suggested next
-delivery order is full maintenance windows, then public status pages.
+These are planned capabilities, not implemented behavior. Retention, hourly and
+daily aggregation, selectable one-day, seven-day, and 30-day resource history,
+groups, multiple tags, combined search/filtering, structured maintenance windows,
+the searchable all-customer site registry, sortable administrative tables, and
+the feedback inbox with media support and bot replies are implemented. The
+current history includes availability, average and peak latency, a per-agent
+regional breakdown, and durable central incident intervals. Incident alerts
+create an auto-expiring one-hour maintenance window. Suggested next delivery
+order is regional classification, then public status pages.
 
 ### High Priority
 
-- [ ] Add multiple tags per resource alongside the implemented single group,
-  search, and group filter.
-- [ ] Generalize the implemented immediate one-hour incident pause into full
-  maintenance windows with scheduled starts, arbitrary duration, and automatic
-  expiry. Make monitoring behavior during maintenance explicit and distinguish
-  planned maintenance from outages in history and reports.
 - [ ] Extend the implemented per-agent regional availability breakdown to show
   network/provider comparisons and automatically distinguish a global outage
   from a failure limited to one region.

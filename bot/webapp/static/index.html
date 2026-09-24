@@ -7,9 +7,9 @@
   <meta name="theme-color" content="#07110f">
   <meta name="robots" content="noindex, nofollow">
   <title>Webcheck</title>
-  <link rel="stylesheet" href="/app/static/app.css?v=9">
+  <link rel="stylesheet" href="/app/static/app.css?v=10">
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <script src="/app/static/app.js?v=9" defer></script>
+  <script src="/app/static/app.js?v=10" defer></script>
 </head>
 <body>
   <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -104,9 +104,9 @@
         <small class="warn-label">проверить</small>
       </button>
       <button class="metric" data-filter="paused" type="button" aria-pressed="false">
-        <span>Пауза</span>
+        <span>Пауза / ТО</span>
         <strong id="metric-paused">—</strong>
-        <small>отключено</small>
+        <small>не проверяется</small>
       </button>
     </section>
 
@@ -124,12 +124,18 @@
       <div class="resource-controls">
         <label class="search-control" for="site-search">
           <span>Поиск</span>
-          <input id="site-search" type="search" placeholder="Домен или группа" autocomplete="off">
+          <input id="site-search" type="search" placeholder="Домен, группа или тег" autocomplete="off">
         </label>
         <label class="group-control" for="group-select">
           <span>Группа</span>
           <select id="group-select">
             <option value="all">Все группы</option>
+          </select>
+        </label>
+        <label class="tag-control" for="tag-select">
+          <span>Тег</span>
+          <select id="tag-select">
+            <option value="all">Все теги</option>
           </select>
         </label>
         <div class="filter-state">
@@ -187,8 +193,32 @@
       <div class="plain-field">
         <input id="site-group" name="site_group" maxlength="40" autocomplete="off" placeholder="Например, Production">
       </div>
+      <label for="site-tags">Теги <small>до 8, через запятую</small></label>
+      <div class="plain-field">
+        <input id="site-tags" name="tags" maxlength="199" autocomplete="off" placeholder="api, production, critical">
+      </div>
       <p class="form-error hidden" id="form-error"></p>
       <button class="submit-button" id="add-submit" type="submit">Добавить в мониторинг</button>
+    </form>
+  </dialog>
+
+  <dialog id="maintenance-dialog" class="maintenance-dialog">
+    <form class="dialog-card" id="maintenance-form">
+      <button class="dialog-close" id="close-maintenance" aria-label="Закрыть" type="button">×</button>
+      <p class="eyebrow">PLANNED SILENCE</p>
+      <h2 id="maintenance-title">Окно обслуживания</h2>
+      <p class="dialog-copy">Регулярные проверки и алерты будут отключены внутри окна. Ручная проверка останется доступной.</p>
+      <div class="maintenance-time-grid">
+        <label>Начало<input id="maintenance-start" type="datetime-local" required></label>
+        <label>Окончание<input id="maintenance-end" type="datetime-local" required></label>
+      </div>
+      <label for="maintenance-reason">Описание <small>необязательно</small></label>
+      <div class="plain-field">
+        <input id="maintenance-reason" maxlength="160" autocomplete="off" placeholder="Релиз инфраструктуры">
+      </div>
+      <p class="form-error hidden" id="maintenance-error"></p>
+      <button class="submit-button" id="maintenance-submit" type="submit">Запланировать окно</button>
+      <div class="maintenance-ledger" id="maintenance-list"></div>
     </form>
   </dialog>
 
@@ -215,6 +245,8 @@
       <div class="history-regions" id="history-regions"></div>
       <h3>Центральные инциденты</h3>
       <div class="history-incidents" id="history-incidents"></div>
+      <h3>Плановое обслуживание</h3>
+      <div class="history-maintenance" id="history-maintenance"></div>
       <h3>События</h3>
       <div class="history-events" id="history-events"></div>
     </section>
@@ -229,10 +261,12 @@
             <span class="status-badge"><i></i><b></b></span>
             <h3 class="site-host"></h3>
             <span class="site-group hidden"></span>
+            <span class="maintenance-badge hidden">MAINTENANCE</span>
           </div>
           <button class="more-button" type="button" aria-label="Показать действия">•••</button>
         </div>
         <p class="site-url"></p>
+        <div class="site-tags"></div>
         <div class="site-meta">
           <span class="checked-at"></span>
           <span class="latency"></span>
@@ -242,6 +276,8 @@
           <button data-action="history" type="button">История</button>
           <button data-action="check" type="button">Проверить сейчас</button>
           <button data-action="group" type="button">Изменить группу</button>
+          <button data-action="tags" type="button">Изменить теги</button>
+          <button data-action="maintenance" type="button">Обслуживание</button>
           <button data-action="toggle" type="button"></button>
           <button class="danger-action" data-action="delete" type="button">Удалить</button>
         </div>
