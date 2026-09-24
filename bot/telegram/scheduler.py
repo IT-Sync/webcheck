@@ -176,7 +176,15 @@ async def process_site(bot, site_row):
         # HTTP
         if not http_ok:
             new_fail_count = http_fail_count + 1
-            incident_started_at = start_site_incident(site_id, now, http_details.get("ip"))
+            incident_started_at = start_site_incident(
+                site_id,
+                now,
+                http_details.get("ip"),
+                http_status=http_details.get("status_code"),
+                latency_ms=http_details.get("latency_ms"),
+                error=http_details.get("error"),
+                failure_count=new_fail_count,
+            )
             should_notify_http = (
                 new_fail_count >= HTTP_FAILURE_THRESHOLD and
                 not notified_http
@@ -216,7 +224,13 @@ async def process_site(bot, site_row):
                 await notify_block(bot, user_id, url)
                 return
             log_event(url, "Сайт восстановился")
-            clear_site_incident(site_id)
+            clear_site_incident(
+                site_id,
+                ended_at=now,
+                http_status=http_details.get("status_code"),
+                latency_ms=http_details.get("latency_ms"),
+                resolved_ip=http_details.get("ip"),
+            )
             update_site_success(
                 site_id,
                 http_status=http_details.get("status_code"),
@@ -226,7 +240,13 @@ async def process_site(bot, site_row):
             set_site_flags_by_id(site_id, http=False, http_ts=None, http_fail_count=0)
         else:
             if incident_started_at:
-                clear_site_incident(site_id)
+                clear_site_incident(
+                    site_id,
+                    ended_at=now,
+                    http_status=http_details.get("status_code"),
+                    latency_ms=http_details.get("latency_ms"),
+                    resolved_ip=http_details.get("ip"),
+                )
             update_site_success(
                 site_id,
                 http_status=http_details.get("status_code"),

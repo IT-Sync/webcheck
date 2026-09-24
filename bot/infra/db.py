@@ -78,6 +78,38 @@ c.execute('''CREATE TABLE IF NOT EXISTS agent_check_hourly (
     PRIMARY KEY (bucket_start, url, agent_id)
 )''')
 
+c.execute('''CREATE TABLE IF NOT EXISTS agent_check_daily (
+    bucket_start TIMESTAMP NOT NULL,
+    url TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    country TEXT,
+    region TEXT,
+    checks INTEGER NOT NULL DEFAULT 0,
+    successful_checks INTEGER NOT NULL DEFAULT 0,
+    latency_sum_ms BIGINT NOT NULL DEFAULT 0,
+    latency_samples INTEGER NOT NULL DEFAULT 0,
+    max_latency_ms INTEGER,
+    PRIMARY KEY (bucket_start, url, agent_id)
+)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS central_incidents (
+    id BIGSERIAL PRIMARY KEY,
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    started_at TIMESTAMP NOT NULL,
+    ended_at TIMESTAMP,
+    failure_count INTEGER NOT NULL DEFAULT 1,
+    start_error TEXT,
+    start_http_status INTEGER,
+    start_latency_ms INTEGER,
+    start_resolved_ip TEXT,
+    end_http_status INTEGER,
+    end_latency_ms INTEGER,
+    end_resolved_ip TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+)''')
+
 c.execute('''CREATE TABLE IF NOT EXISTS feedback_conversations (
     id SERIAL PRIMARY KEY,
     user_id BIGINT UNIQUE NOT NULL,
@@ -834,24 +866,92 @@ def update_site_success(site_id, http_status=None, latency_ms=None, resolved_ip=
     )
     conn.commit()
 
-def start_site_incident(site_id, started_at, resolved_ip=None):
-    c.execute(
-        """
-        UPDATE sites
-        SET incident_started_at = COALESCE(incident_started_at, %s),
-            last_resolved_ip = COALESCE(%s, last_resolved_ip)
-        WHERE id = %s
-        RETURNING incident_started_at
-        """,
-        (started_at, resolved_ip, site_id)
-    )
-    row = c.fetchone()
-    conn.commit()
-    return row[0] if row else started_at
+def start_site_incident(
+    site_id,
+    started_at,
+    resolved_ip=None,
+    *,
+    http_status=None,
+    latency_ms=None,
+    error=None,
+    failure_count=1,
+):
+    try:
+        c.execute(
+            """
+            UPDATE sites
+            SET incident_started_at = COALESCE(incident_started_at, %s),
+                last_resolved_ip = COALESCE(%s, last_resolved_ip)
+            WHERE id = %s
+            RETURNING incident_started_at, url
+            """,
+            (started_at, resolved_ip, site_id),
+        )
+        row = c.fetchone()
+        if not row:
+            conn.rollback()
+            return started_at
+        incident_started_at, url = row
+        c.execute(
+            """
+            INSERT INTO central_incidents (
+                site_id, url, started_at, failure_count, start_error,
+                start_http_status, start_latency_ms, start_resolved_ip,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (site_id) WHERE ended_at IS NULL DO UPDATE SET
+                failure_count = GREATEST(
+                    central_incidents.failure_count,
+                    EXCLUDED.failure_count
+                ),
+                updated_at = EXCLUDED.updated_at
+            """,
+            (
+                site_id, url, incident_started_at, failure_count, error,
+                http_status, latency_ms, resolved_ip, datetime.utcnow(),
+            ),
+        )
+        conn.commit()
+        return incident_started_at
+    except Exception:
+        conn.rollback()
+        raise
 
-def clear_site_incident(site_id):
-    c.execute("UPDATE sites SET incident_started_at = NULL WHERE id = %s", (site_id,))
-    conn.commit()
+
+def clear_site_incident(
+    site_id,
+    *,
+    ended_at=None,
+    http_status=None,
+    latency_ms=None,
+    resolved_ip=None,
+):
+    ended_at = ended_at or datetime.utcnow()
+    try:
+        c.execute(
+            "UPDATE sites SET incident_started_at = NULL WHERE id = %s",
+            (site_id,),
+        )
+        c.execute(
+            """
+            UPDATE central_incidents
+            SET ended_at = %s,
+                end_http_status = %s,
+                end_latency_ms = %s,
+                end_resolved_ip = %s,
+                updated_at = %s
+            WHERE site_id = %s AND ended_at IS NULL
+            """,
+            (
+                ended_at, http_status, latency_ms, resolved_ip,
+                ended_at, site_id,
+            ),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 def get_site_statuses():
     c.execute("SELECT url, last_status FROM sites")
@@ -1003,7 +1103,9 @@ def get_site_history_for_user(site_id, user_id, days=7):
         return None
 
     url = site[3]
-    since = datetime.utcnow() - timedelta(days=days)
+    now = datetime.utcnow()
+    since = now - timedelta(days=days)
+    granularity = "hour" if days <= 7 else "day"
     c.execute(
         """
         SELECT created_at, message
@@ -1029,8 +1131,47 @@ def get_site_history_for_user(site_id, user_id, days=7):
 
     c.execute(
         """
+        SELECT id, started_at, ended_at, failure_count, start_error,
+               start_http_status, start_latency_ms, start_resolved_ip,
+               end_http_status, end_latency_ms, end_resolved_ip
+        FROM central_incidents
+        WHERE site_id = %s
+          AND started_at <= %s
+          AND COALESCE(ended_at, %s) >= %s
+        ORDER BY started_at DESC
+        LIMIT 100
+        """,
+        (site_id, now, now, since),
+    )
+    incidents = []
+    central_downtime_seconds = 0
+    for row in c.fetchall():
+        effective_start = max(row[1], since)
+        effective_end = min(row[2] or now, now)
+        duration_seconds = max(
+            0,
+            round((effective_end - effective_start).total_seconds()),
+        )
+        central_downtime_seconds += duration_seconds
+        incidents.append({
+            "id": row[0],
+            "started_at": row[1],
+            "ended_at": row[2],
+            "duration_seconds": duration_seconds,
+            "failure_count": row[3],
+            "start_error": row[4],
+            "start_http_status": row[5],
+            "start_latency_ms": row[6],
+            "start_resolved_ip": row[7],
+            "end_http_status": row[8],
+            "end_latency_ms": row[9],
+            "end_resolved_ip": row[10],
+        })
+
+    c.execute(
+        """
         WITH points AS (
-            SELECT date_trunc('hour', created_at) AS bucket_start,
+            SELECT date_trunc(%s, created_at) AS bucket_start,
                    agent_id,
                    MAX(country) AS country,
                    MAX(region) AS region,
@@ -1051,10 +1192,18 @@ def get_site_history_for_user(site_id, user_id, days=7):
             WHERE url = %s AND created_at >= %s
             GROUP BY 1, 2
             UNION ALL
+            SELECT date_trunc(%s, bucket_start), agent_id,
+                   MAX(country), MAX(region), SUM(checks),
+                   SUM(successful_checks), SUM(latency_sum_ms),
+                   SUM(latency_samples), MAX(max_latency_ms)
+            FROM agent_check_hourly
+            WHERE url = %s AND bucket_start >= %s
+            GROUP BY 1, 2
+            UNION ALL
             SELECT bucket_start, agent_id, country, region, checks,
                    successful_checks, latency_sum_ms, latency_samples,
                    max_latency_ms
-            FROM agent_check_hourly
+            FROM agent_check_daily
             WHERE url = %s AND bucket_start >= %s
         )
         SELECT bucket_start, agent_id, MAX(country), MAX(region),
@@ -1064,22 +1213,30 @@ def get_site_history_for_user(site_id, user_id, days=7):
         GROUP BY bucket_start, agent_id
         ORDER BY bucket_start, agent_id
         """,
-        (url, since, url, since),
+        (
+            granularity, url, since,
+            granularity, url, since,
+            url, since,
+        ),
     )
     points = []
     total_checks = 0
     successful_checks = 0
     latency_sum = 0
     latency_samples = 0
+    max_latency_ms = None
     for row in c.fetchall():
         checks = int(row[4] or 0)
         successes = int(row[5] or 0)
         point_latency_sum = int(row[6] or 0)
         point_latency_samples = int(row[7] or 0)
+        point_max_latency = row[8]
         total_checks += checks
         successful_checks += successes
         latency_sum += point_latency_sum
         latency_samples += point_latency_samples
+        if point_max_latency is not None:
+            max_latency_ms = max(max_latency_ms or 0, point_max_latency)
         points.append({
             "bucket_start": row[0],
             "agent_id": row[1],
@@ -1088,21 +1245,42 @@ def get_site_history_for_user(site_id, user_id, days=7):
             "checks": checks,
             "successful_checks": successes,
             "availability": round(successes * 100 / checks, 2) if checks else None,
-            "avg_latency_ms": round(point_latency_sum / point_latency_samples) if point_latency_samples else None,
-            "max_latency_ms": row[8],
+            "latency_sum_ms": point_latency_sum,
+            "latency_samples": point_latency_samples,
+            "avg_latency_ms": (
+                round(point_latency_sum / point_latency_samples)
+                if point_latency_samples else None
+            ),
+            "max_latency_ms": point_max_latency,
         })
 
     return {
         "site_id": site_id,
         "url": url,
         "days": days,
+        "granularity": granularity,
+        "availability_policy": {
+            "basis": "observed_agent_checks",
+            "missing_checks": "excluded",
+            "planned_maintenance": "excluded",
+        },
         "summary": {
             "checks": total_checks,
-            "availability": round(successful_checks * 100 / total_checks, 2) if total_checks else None,
-            "avg_latency_ms": round(latency_sum / latency_samples) if latency_samples else None,
+            "availability": (
+                round(successful_checks * 100 / total_checks, 2)
+                if total_checks else None
+            ),
+            "avg_latency_ms": (
+                round(latency_sum / latency_samples)
+                if latency_samples else None
+            ),
+            "max_latency_ms": max_latency_ms,
             "events": len(events),
+            "central_incidents": len(incidents),
+            "central_downtime_seconds": central_downtime_seconds,
         },
         "points": points,
+        "incidents": incidents,
         "events": events,
     }
 
@@ -1461,6 +1639,11 @@ def migrate_add_notification_flags():
     c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_results_url_created_at ON agent_check_results(url, created_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_results_agent_id ON agent_check_results(agent_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_hourly_url_bucket ON agent_check_hourly(url, bucket_start DESC)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_hourly_bucket_start ON agent_check_hourly(bucket_start)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_agent_check_daily_url_bucket ON agent_check_daily(url, bucket_start DESC)")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_central_incidents_active_site ON central_incidents(site_id) WHERE ended_at IS NULL")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_central_incidents_site_started ON central_incidents(site_id, started_at DESC)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_central_incidents_url_started ON central_incidents(url, started_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_events_url_created_at ON events(url, created_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sites_user_group ON sites(user_id, site_group)")
     c.execute("ALTER TABLE feedback_conversations ADD COLUMN IF NOT EXISTS active_media_group_id TEXT")

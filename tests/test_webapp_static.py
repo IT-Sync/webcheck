@@ -19,8 +19,8 @@ class WebAppStaticMarkupTest(unittest.TestCase):
     def test_frontend_assets_have_cache_busting_version(self):
         source = INDEX.read_text(encoding="utf-8")
 
-        self.assertIn("/app/static/app.css?v=8", source)
-        self.assertIn("/app/static/app.js?v=8", source)
+        self.assertIn("/app/static/app.css?v=9", source)
+        self.assertIn("/app/static/app.js?v=9", source)
 
     def test_status_metrics_are_filter_controls(self):
         source = INDEX.read_text(encoding="utf-8")
@@ -35,8 +35,18 @@ class WebAppStaticMarkupTest(unittest.TestCase):
         markup = INDEX.read_text(encoding="utf-8")
 
         self.assertIn('id="history-dialog"', markup)
+        self.assertIn('data-days="1"', markup)
+        self.assertIn('data-days="7"', markup)
+        self.assertIn('data-days="30"', markup)
+        self.assertIn('id="history-latency-chart"', markup)
+        self.assertIn('id="history-incidents"', markup)
         self.assertIn('data-action="history"', markup)
         self.assertIn('data-action="group"', markup)
+        script = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("history.summary.max_latency_ms", script)
+        self.assertIn("historyDays: 7, historyRequest: 0,\n  };", script)
+        self.assertIn("historyLatencyChart: document.querySelector", script)
+        self.assertIn("historyIncidents: document.querySelector", script)
 
     def test_feedback_returns_the_user_to_the_bot(self):
         markup = INDEX.read_text(encoding="utf-8")

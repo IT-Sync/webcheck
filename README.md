@@ -20,8 +20,9 @@ remain compatible.
   management, status filters, and problem-first sorting.
 - Fast Mini App startup from a session cache while current data loads in the
   background.
-- Resource groups, search, group filtering, and a seven-day history view with
-  regional availability, response-time summaries, and monitoring events.
+- Resource groups, search, group filtering, and selectable daily, weekly, and
+  monthly history with regional availability, average and peak latency charts,
+  structured central incidents, and monitoring events.
 - Bounded DNS validation when a site is added, including rejection of private,
   loopback, link-local, and other non-public targets.
 - Administrative console with sortable data tables, a searchable all-site
@@ -104,6 +105,7 @@ WEB_APP_AGENT_TIMEOUT_SECONDS=5
 
 DB_MAINTENANCE_ENABLED=0
 AGENT_RESULT_RETENTION_DAYS=7
+AGENT_HOURLY_RETENTION_DAYS=30
 USER_LOG_RETENTION_DAYS=90
 BOT_MESSAGE_RETENTION_DAYS=90
 EVENT_RETENTION_DAYS=365
@@ -236,9 +238,13 @@ warning, and pending resources before healthy and paused resources. Users can
 also sort by name or most recent check.
 
 Users can assign a resource to a group, search by domain or group, and filter the
-list by group. The resource history action shows the last seven days of
-availability and response-time aggregates by remote agent together with relevant
-monitoring events. Existing sites start with no group and require no data
+list by group. The resource history action shows availability and response-time
+aggregates by remote agent together with relevant monitoring events. Users can
+switch between one, seven, and 30 days. Availability
+uses observed remote-agent checks only: missing checks do not count as success or
+failure, and checks omitted during a pause or planned maintenance are excluded.
+Structured central incidents retain outage start/recovery diagnostics separately
+from agent availability. Existing sites start with no group and require no data
 migration by operators.
 
 Adding a site validates DNS but does not perform a full HTTP/TLS/WHOIS check in
@@ -281,8 +287,9 @@ See [agent/README.md](agent/README.md) for its configuration and protocol.
 
 Raw remote-agent results grow by one row per site, online agent, and monitoring
 cycle. The maintenance job archives expired raw results into hourly aggregates
-before deleting them. History reads combine retained raw rows with aggregates,
-so cleanup does not remove chart history.
+before deleting them, then compacts hourly rows into daily aggregates after 30
+days. History reads combine retained raw, hourly, and daily rows, so cleanup does
+not remove chart history within the supported 90-day API window.
 
 Maintenance runs hourly in bounded batches and uses a dedicated PostgreSQL
 connection outside the asyncio event loop. It is disabled by default for a safe
@@ -291,6 +298,7 @@ first deployment. Recommended production settings are:
 ```env
 DB_MAINTENANCE_ENABLED=1
 AGENT_RESULT_RETENTION_DAYS=7
+AGENT_HOURLY_RETENTION_DAYS=30
 USER_LOG_RETENTION_DAYS=90
 BOT_MESSAGE_RETENTION_DAYS=90
 EVENT_RETENTION_DAYS=365
@@ -303,7 +311,8 @@ For the first rollout:
 
 1. Back up PostgreSQL.
 2. Deploy with `DB_MAINTENANCE_ENABLED=0` and confirm that startup creates
-   `agent_check_hourly` and the additive site fields.
+   `agent_check_hourly`, `agent_check_daily`, `central_incidents`, and the
+   additive site fields.
 3. Create the cleanup index online, without blocking normal writes for the full
    build duration:
 

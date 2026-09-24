@@ -31,11 +31,13 @@ Current behavior:
 - supports add, delete, pause, resume, and manual check operations;
 - provides status-counter filters, domain/group search, group filtering, and
   problem-first, name, or recent sorting;
-- supports optional resource groups and a seven-day history view backed by raw
-  and hourly aggregated agent results plus relevant monitoring events; the view
-  shows hourly availability, average latency, and availability grouped by
-  remote agent and region, while its authenticated API accepts periods from one
-  to 90 days;
+- supports optional resource groups and selectable one-day, seven-day, and
+  30-day history views; the authenticated API accepts periods from one to 90
+  days, uses hourly buckets through seven days and daily buckets after that,
+  and combines raw, hourly, and daily agent aggregates with monitoring events
+  and durable central incidents;
+- shows availability, average and peak latency, and availability grouped by
+  remote agent and region;
 - renders session-cached site data immediately and refreshes it from the server;
 - supports closing the add dialog through its close control, Telegram Back,
   Escape, and backdrop interaction where the web view supports it;
@@ -56,6 +58,14 @@ to the alert for context, but they do not currently decide whether the global
 outage alert is sent. Incident alert actions support an immediate check, history
 view, and a one-hour monitoring pause that expires automatically. Arbitrary or
 scheduled maintenance windows are not implemented.
+
+Each continuous centrally detected outage is stored as a structured incident
+with start and recovery diagnostics and the failure count observed when the
+incident opened. The legacy current-incident fields on `sites` remain for
+runtime compatibility, while `central_incidents` provides durable intervals for
+history. Central incidents are displayed separately from remote-agent
+availability because the service does not yet retain every successful central
+check needed to calculate central availability.
 
 The admin console shows currently connected agents with their connection,
 heartbeat, and last-result timestamps. Agent state is process-local and is not
@@ -88,15 +98,23 @@ pool use when `TEST_DATABASE_URL` is set.
 ## Data Retention
 
 The application includes an opt-in hourly maintenance job. It archives expired
-`agent_check_results` into `agent_check_hourly` and deletes raw rows in bounded,
+`agent_check_results` into `agent_check_hourly`, then archives expired hourly
+rows into `agent_check_daily`; both stages delete their source rows in bounded,
 transactional batches using a dedicated database connection. Default retention
-is seven days for raw agent results, 90 days for user and bot logs, and 365 days
-for events. The interval is configurable and completion logs include deleted
-row counts and duration. `DB_MAINTENANCE_ENABLED` defaults to `0`; production
-must back up the database, deploy the additive schema, and then enable cleanup
-deliberately. Maintenance verifies that the operator-created cleanup index is
-both ready and valid; failed concurrent builds can leave an invalid index that
-must be dropped and rebuilt concurrently.
+is seven days for raw agent results, 30 days for hourly aggregates, 90 days for
+user and bot logs, and 365 days for events. The interval and hourly retention
+are configurable, and completion logs include archived row counts and duration.
+`DB_MAINTENANCE_ENABLED` defaults to `0`; production must back up the database,
+deploy the additive schema, and then enable cleanup deliberately. Maintenance
+verifies that the operator-created cleanup index is both ready and valid;
+failed concurrent builds can leave an invalid index that must be dropped and
+rebuilt concurrently.
+
+Availability is calculated only from observed remote-agent checks. Missing
+checks are excluded from the denominator rather than treated as success or
+failure. Pauses suppress checks, so their absent samples are also excluded.
+Future planned-maintenance windows must follow the same exclusion rule and
+record their intervals explicitly so the UI can distinguish them from outages.
 
 The administrative console uses the same dark control-room visual language as
 the Mini App. Its dedicated `/admin/sites` registry lists every customer's
@@ -137,19 +155,19 @@ migrations. Back up PostgreSQL before major releases.
 
 ## Planned Development
 
-The product backlog in `TODO.md` covers longer-period charts, tags, full
-maintenance windows, automatic global-versus-regional classification,
-monitoring-health alerts, multi-agent incident confirmation, acknowledgement,
-notification preferences, bulk operations, public status pages, content/API
-checks, DNS changes, and team access. Some foundations exist as documented
-above, but these extensions are not yet implemented. The proposed next sequence
-is longer-period analytics, maintenance windows, and public status pages.
+The product backlog in `TODO.md` covers tags, full maintenance windows,
+automatic global-versus-regional classification, monitoring-health alerts,
+multi-agent incident confirmation, acknowledgement, notification preferences,
+bulk operations, public status pages, content/API checks, DNS changes, and team
+access. Some foundations exist as documented above, but these extensions are
+not yet implemented. The proposed next sequence is maintenance windows and
+public status pages.
 
 ## Validation Baseline
 
-The current suite contains 59 `unittest` tests. The standard run passes 55 and
-skips four PostgreSQL integration tests unless `TEST_DATABASE_URL` points to a
-disposable database; all 59 pass when that database is provided.
+The current suite contains 61 `unittest` tests. The standard run passes 56 and
+skips five PostgreSQL integration tests unless `TEST_DATABASE_URL` points to a
+disposable database; all 61 pass when that database is provided.
 
 ```bash
 python -m unittest discover -s tests -v

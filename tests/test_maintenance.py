@@ -3,6 +3,7 @@ from unittest.mock import Mock, patch
 
 from bot.infra.maintenance import (
     MaintenanceSettings,
+    _archive_hourly_batch,
     _require_cleanup_index,
     run_database_maintenance,
 )
@@ -15,6 +16,7 @@ class MaintenanceSettingsTest(unittest.TestCase):
 
         self.assertFalse(settings.enabled)
         self.assertEqual(settings.agent_result_days, 7)
+        self.assertEqual(settings.agent_hourly_days, 30)
         self.assertEqual(settings.user_log_days, 90)
         self.assertEqual(settings.event_days, 365)
         self.assertEqual(settings.batch_size, 5000)
@@ -52,6 +54,19 @@ class MaintenanceSettingsTest(unittest.TestCase):
 
         _require_cleanup_index(cursor)
 
+
+    def test_hourly_rows_roll_up_into_daily_aggregates(self):
+        cursor = Mock()
+        cursor.rowcount = 4
+
+        count = _archive_hourly_batch(cursor, "cutoff", 500)
+
+        self.assertEqual(count, 4)
+        query, params = cursor.execute.call_args.args
+        self.assertIn("INSERT INTO agent_check_daily", query)
+        self.assertIn("date_trunc('day', bucket_start)", query)
+        self.assertIn("DELETE FROM agent_check_hourly", query)
+        self.assertEqual(params, ("cutoff", 500))
 
 if __name__ == "__main__":
     unittest.main()

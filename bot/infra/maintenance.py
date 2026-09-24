@@ -14,6 +14,7 @@ class MaintenanceSettings:
     event_days: int
     batch_size: int
     max_batches: int
+    agent_hourly_days: int = 30
 
     @classmethod
     def from_env(cls):
@@ -25,6 +26,7 @@ class MaintenanceSettings:
             event_days=_positive_int("EVENT_RETENTION_DAYS", 365),
             batch_size=_bounded_int("DB_CLEANUP_BATCH_SIZE", 5000, 100, 50000),
             max_batches=_bounded_int("DB_CLEANUP_MAX_BATCHES", 10, 1, 100),
+            agent_hourly_days=_positive_int("AGENT_HOURLY_RETENTION_DAYS", 30),
         )
 
 
@@ -96,6 +98,62 @@ def _archive_agent_batch(cursor, cutoff, batch_size):
     return cursor.rowcount
 
 
+def _archive_hourly_batch(cursor, cutoff, batch_size):
+    cursor.execute(
+        """
+        WITH doomed AS MATERIALIZED (
+            SELECT bucket_start, url, agent_id, country, region, checks,
+                   successful_checks, latency_sum_ms, latency_samples,
+                   max_latency_ms
+            FROM agent_check_hourly
+            WHERE bucket_start < %s
+            ORDER BY bucket_start, url, agent_id
+            LIMIT %s
+            FOR UPDATE SKIP LOCKED
+        ), archived AS (
+            INSERT INTO agent_check_daily (
+                bucket_start, url, agent_id, country, region, checks,
+                successful_checks, latency_sum_ms, latency_samples,
+                max_latency_ms
+            )
+            SELECT date_trunc('day', bucket_start), url, agent_id,
+                   MAX(country), MAX(region), SUM(checks),
+                   SUM(successful_checks), SUM(latency_sum_ms),
+                   SUM(latency_samples), MAX(max_latency_ms)
+            FROM doomed
+            GROUP BY date_trunc('day', bucket_start), url, agent_id
+            ON CONFLICT (bucket_start, url, agent_id) DO UPDATE SET
+                country = COALESCE(EXCLUDED.country, agent_check_daily.country),
+                region = COALESCE(EXCLUDED.region, agent_check_daily.region),
+                checks = agent_check_daily.checks + EXCLUDED.checks,
+                successful_checks = (
+                    agent_check_daily.successful_checks
+                    + EXCLUDED.successful_checks
+                ),
+                latency_sum_ms = (
+                    agent_check_daily.latency_sum_ms
+                    + EXCLUDED.latency_sum_ms
+                ),
+                latency_samples = (
+                    agent_check_daily.latency_samples
+                    + EXCLUDED.latency_samples
+                ),
+                max_latency_ms = GREATEST(
+                    agent_check_daily.max_latency_ms,
+                    EXCLUDED.max_latency_ms
+                )
+            RETURNING 1
+        )
+        DELETE FROM agent_check_hourly
+        WHERE (bucket_start, url, agent_id) IN (
+            SELECT bucket_start, url, agent_id FROM doomed
+        )
+        """,
+        (cutoff, batch_size),
+    )
+    return cursor.rowcount
+
+
 def _require_cleanup_index(cursor):
     cursor.execute(
         """
@@ -140,6 +198,7 @@ def run_database_maintenance(settings=None, now=None):
     now = now or datetime.utcnow()
     deleted = {
         "agent_check_results": 0,
+        "agent_check_hourly": 0,
         "user_logs": 0,
         "bot_messages": 0,
         "events": 0,
@@ -156,6 +215,16 @@ def run_database_maintenance(settings=None, now=None):
                     if count < settings.batch_size:
                         break
 
+                hourly_cutoff = now - timedelta(days=settings.agent_hourly_days)
+                for _ in range(settings.max_batches):
+                    count = _archive_hourly_batch(
+                        cursor,
+                        hourly_cutoff,
+                        settings.batch_size,
+                    )
+                    deleted["agent_check_hourly"] += count
+                    if count < settings.batch_size:
+                        break
                 retention = {
                     "user_logs": settings.user_log_days,
                     "bot_messages": settings.bot_message_days,

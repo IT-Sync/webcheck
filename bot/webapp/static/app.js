@@ -13,7 +13,11 @@
 
   appShell.hidden = false;
   document.body.classList.add("telegram-access");
-  const state = { sites: [], user: null, limit: 0, loaded: false, filter: "all", sort: "priority", query: "", group: "all" };
+  const state = {
+    sites: [], user: null, limit: 0, loaded: false, filter: "all",
+    sort: "priority", query: "", group: "all", historySite: null,
+    historyDays: 7, historyRequest: 0,
+  };
   const elements = {
     list: document.querySelector("#site-list"),
     empty: document.querySelector("#empty-state"),
@@ -35,10 +39,16 @@
     group: document.querySelector("#group-select"),
     monitorSection: document.querySelector("#monitor-section"),
     historyDialog: document.querySelector("#history-dialog"),
+    historyEyebrow: document.querySelector("#history-eyebrow"),
     historyTitle: document.querySelector("#history-title"),
+    historyPeriods: [...document.querySelectorAll("#history-periods [data-days]")],
     historySummary: document.querySelector("#history-summary"),
+    historyGranularity: document.querySelector("#history-granularity"),
     historyChart: document.querySelector("#history-chart"),
+    historyLatencyChart: document.querySelector("#history-latency-chart"),
+    historyPolicy: document.querySelector("#history-policy"),
     historyRegions: document.querySelector("#history-regions"),
+    historyIncidents: document.querySelector("#history-incidents"),
     historyEvents: document.querySelector("#history-events"),
     closeHistory: document.querySelector("#close-history"),
     feedback: document.querySelector("#open-feedback"),
@@ -337,18 +347,38 @@
   }
 
   async function openHistory(site) {
+    state.historySite = site;
     elements.historyTitle.textContent = hostFromUrl(site.url);
-    elements.historySummary.innerHTML = '<div class="history-empty">Загружаем историю…</div>';
-    elements.historyChart.replaceChildren();
-    elements.historyRegions.replaceChildren();
-    elements.historyEvents.replaceChildren();
     elements.historyDialog.showModal();
     document.body.classList.add("dialog-open");
     telegram?.BackButton?.show();
+    await loadHistory(state.historyDays);
+  }
+
+  async function loadHistory(days) {
+    if (!state.historySite) return;
+    state.historyDays = days;
+    const request = ++state.historyRequest;
+    elements.historyPeriods.forEach((button) => {
+      button.classList.toggle("active", Number(button.dataset.days) === days);
+    });
+    elements.historyEyebrow.textContent = `RESOURCE SIGNAL / ${days} DAY${days === 1 ? "" : "S"}`;
+    elements.historySummary.innerHTML = '<div class="history-empty">Загружаем историю…</div>';
+    elements.historyChart.replaceChildren();
+    elements.historyLatencyChart.replaceChildren();
+    elements.historyRegions.replaceChildren();
+    elements.historyIncidents.replaceChildren();
+    elements.historyEvents.replaceChildren();
+    elements.historyPolicy.textContent = "";
     try {
-      const payload = await api(`/api/webapp/sites/${site.id}/history?days=7`, { timeoutMs: 15000 });
+      const payload = await api(
+        `/api/webapp/sites/${state.historySite.id}/history?days=${days}`,
+        { timeoutMs: 15000 },
+      );
+      if (request !== state.historyRequest) return;
       renderHistory(payload.history);
     } catch (error) {
+      if (request !== state.historyRequest) return;
       elements.historySummary.innerHTML = "";
       const empty = document.createElement("div");
       empty.className = "history-empty";
@@ -357,11 +387,20 @@
     }
   }
 
+  function formatDuration(seconds) {
+    if (seconds < 60) return `${seconds} сек`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)} мин`;
+    if (seconds < 86400) return `${(seconds / 3600).toFixed(1)} ч`;
+    return `${(seconds / 86400).toFixed(1)} дн`;
+  }
+
   function renderHistory(history) {
+    elements.historyGranularity.textContent = history.granularity === "day" ? "по дням" : "по часам";
     const summaryItems = [
       [history.summary.availability == null ? "—" : `${history.summary.availability}%`, "Доступность"],
-      [history.summary.avg_latency_ms == null ? "—" : `${history.summary.avg_latency_ms} мс`, "Средняя задержка"],
-      [String(history.summary.events), "События"],
+      [history.summary.avg_latency_ms == null ? "—" : `${history.summary.avg_latency_ms} мс`, "Средняя"],
+      [history.summary.max_latency_ms == null ? "—" : `${history.summary.max_latency_ms} мс`, "Пиковая"],
+      [String(history.summary.checks), "Проверки"],
     ];
     elements.historySummary.replaceChildren(...summaryItems.map(([value, label]) => {
       const item = document.createElement("div");
@@ -374,29 +413,71 @@
       return item;
     }));
 
-    const hourly = new Map();
+    const buckets = new Map();
     const regions = new Map();
     history.points.forEach((point) => {
-      const bucket = hourly.get(point.bucket_start) || { checks: 0, successful: 0 };
+      const bucket = buckets.get(point.bucket_start) || {
+        checks: 0, successful: 0, latencySum: 0, latencySamples: 0, maxLatency: null,
+      };
       bucket.checks += point.checks;
       bucket.successful += point.successful_checks;
-      hourly.set(point.bucket_start, bucket);
-      const region = regions.get(point.agent_id) || { checks: 0, successful: 0, label: [point.country, point.region].filter(Boolean).join(" · ") || point.agent_id };
+      bucket.latencySum += point.latency_sum_ms || 0;
+      bucket.latencySamples += point.latency_samples || 0;
+      if (point.max_latency_ms != null) {
+        bucket.maxLatency = Math.max(bucket.maxLatency || 0, point.max_latency_ms);
+      }
+      buckets.set(point.bucket_start, bucket);
+      const region = regions.get(point.agent_id) || {
+        checks: 0,
+        successful: 0,
+        label: [point.country, point.region].filter(Boolean).join(" · ") || point.agent_id,
+      };
       region.checks += point.checks;
       region.successful += point.successful_checks;
       regions.set(point.agent_id, region);
     });
-    const bars = [...hourly.entries()].slice(-168).map(([bucket, point]) => {
+
+    const orderedBuckets = [...buckets.entries()];
+    const availabilityBars = orderedBuckets.map(([bucket, point]) => {
       const availability = point.checks ? point.successful * 100 / point.checks : 0;
       const bar = document.createElement("span");
       bar.className = `history-bar ${availability < 90 ? "down" : availability < 100 ? "warning" : ""}`;
       bar.style.height = `${Math.max(4, availability)}%`;
-      bar.title = `${new Date(bucket).toLocaleString("ru-RU")}: ${availability.toFixed(1)}%`;
+      bar.title = `${new Date(bucket).toLocaleString("ru-RU")}: ${availability.toFixed(1)}% · ${point.checks} проверок`;
       return bar;
     });
-    elements.historyChart.replaceChildren(...bars);
-    if (!bars.length) elements.historyChart.innerHTML = '<div class="history-empty">Агрегированных замеров пока нет</div>';
+    elements.historyChart.replaceChildren(...availabilityBars);
+    if (!availabilityBars.length) {
+      elements.historyChart.innerHTML = '<div class="history-empty">Замеров за период пока нет</div>';
+    }
 
+    const latencyCeiling = Math.max(
+      1,
+      ...orderedBuckets.map(([, point]) => point.maxLatency || 0),
+    );
+    const latencyColumns = orderedBuckets.map(([bucket, point]) => {
+      const average = point.latencySamples ? point.latencySum / point.latencySamples : 0;
+      const peak = point.maxLatency || average;
+      const column = document.createElement("span");
+      const averageBar = document.createElement("i");
+      const peakMarker = document.createElement("b");
+      column.className = "latency-column";
+      averageBar.className = "latency-average";
+      peakMarker.className = "latency-peak";
+      averageBar.style.height = `${Math.max(2, average * 100 / latencyCeiling)}%`;
+      peakMarker.style.bottom = `${Math.min(99, peak * 100 / latencyCeiling)}%`;
+      column.title = `${new Date(bucket).toLocaleString("ru-RU")}: avg ${Math.round(average)} мс · peak ${peak} мс`;
+      column.append(averageBar, peakMarker);
+      return column;
+    });
+    elements.historyLatencyChart.replaceChildren(...latencyColumns);
+    if (!latencyColumns.length) {
+      elements.historyLatencyChart.innerHTML = '<div class="history-empty">Latency пока не измерена</div>';
+    }
+
+    elements.historyPolicy.textContent = (
+      "Availability: только фактические agent checks; пропуски и плановое обслуживание исключены."
+    );
     elements.historyRegions.replaceChildren(...[...regions.values()].map((region) => {
       const chip = document.createElement("span");
       chip.className = "region-chip";
@@ -405,18 +486,43 @@
       return chip;
     }));
 
+    const incidents = history.incidents.map((incident) => {
+      const row = document.createElement("article");
+      const time = document.createElement("time");
+      const text = document.createElement("p");
+      row.className = "history-incident";
+      time.textContent = new Date(incident.started_at).toLocaleString("ru-RU", {
+        day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+      });
+      const stateLabel = incident.ended_at ? "восстановлен" : "продолжается";
+      const reason = incident.start_error || (
+        incident.start_http_status ? `HTTP ${incident.start_http_status}` : "нет ответа"
+      );
+      text.textContent = `${stateLabel} · ${formatDuration(incident.duration_seconds)} · ${incident.failure_count} ошибок · ${reason}`;
+      row.append(time, text);
+      return row;
+    });
+    elements.historyIncidents.replaceChildren(...incidents);
+    if (!incidents.length) {
+      elements.historyIncidents.innerHTML = '<div class="history-empty">Центральных инцидентов не было</div>';
+    }
+
     const events = history.events.map((event) => {
       const row = document.createElement("article");
       row.className = "history-event";
       const time = document.createElement("time");
       const text = document.createElement("p");
-      time.textContent = new Date(event.created_at).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+      time.textContent = new Date(event.created_at).toLocaleString("ru-RU", {
+        day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+      });
       text.textContent = event.message;
       row.append(time, text);
       return row;
     });
     elements.historyEvents.replaceChildren(...events);
-    if (!events.length) elements.historyEvents.innerHTML = '<div class="history-empty">За период событий не было</div>';
+    if (!events.length) {
+      elements.historyEvents.innerHTML = '<div class="history-empty">За период событий не было</div>';
+    }
   }
 
   function openAdd() {
@@ -522,6 +628,12 @@
     if (event.target === elements.dialog) closeAdd();
   });
   elements.closeHistory.addEventListener("click", closeHistory);
+  elements.historyPeriods.forEach((button) => {
+    button.addEventListener("click", () => {
+      loadHistory(Number(button.dataset.days));
+      haptic();
+    });
+  });
   elements.historyDialog.addEventListener("close", cleanupAddDialog);
   elements.historyDialog.addEventListener("cancel", (event) => {
     event.preventDefault();

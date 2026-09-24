@@ -300,6 +300,9 @@ async def site_history(request: web.Request) -> web.Response:
         return _json_error("Сайт не найден", status=404, code="not_found")
     for point in history["points"]:
         point["bucket_start"] = _iso(point["bucket_start"])
+    for incident in history["incidents"]:
+        incident["started_at"] = _iso(incident["started_at"])
+        incident["ended_at"] = _iso(incident["ended_at"])
     for event in history["events"]:
         event["created_at"] = _iso(event["created_at"])
     return web.json_response({"ok": True, "history": history})

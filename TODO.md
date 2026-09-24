@@ -40,23 +40,16 @@ should not become a chronological changelog.
 ## Product Feature Backlog
 
 These are planned capabilities, not implemented behavior. Retention,
-aggregation, seven-day resource history, groups, search, the searchable
-all-customer site registry, sortable administrative tables, and the feedback
-inbox with media support and bot replies are implemented. The current history
-already includes hourly availability, average latency, and a per-agent regional
-breakdown. Incident alerts also provide an auto-expiring one-hour pause.
-Suggested next delivery order is longer-period analytics, full maintenance
-windows, then public status pages.
+hourly and daily aggregation, selectable one-day, seven-day, and 30-day resource
+history, groups, search, the searchable all-customer site registry, sortable
+administrative tables, and the feedback inbox with media support and bot replies
+are implemented. The current history includes availability, average and peak
+latency, a per-agent regional breakdown, and durable central incident intervals.
+Incident alerts also provide an auto-expiring one-hour pause. Suggested next
+delivery order is full maintenance windows, then public status pages.
 
 ### High Priority
 
-- [ ] Expose selectable daily, weekly, and monthly views over the implemented
-  history endpoint, which already accepts periods up to 90 days while the UI is
-  fixed to seven. Add latency charts and the already collected peak latency to
-  the UI, introduce daily rollups, and define how missing checks and planned
-  maintenance affect availability calculations. Introduce structured central
-  incident records because the overwritten central status cannot reconstruct
-  historical central checks retrospectively.
 - [ ] Add multiple tags per resource alongside the implemented single group,
   search, and group filter.
 - [ ] Generalize the implemented immediate one-hour incident pause into full

@@ -85,8 +85,15 @@ is a display optimization and is never authoritative.
 Sites have an optional `site_group` field. Search and group filtering happen in
 the Mini App over the authenticated user's bootstrap payload. Group mutations
 verify site ownership on the server. The history endpoint also verifies
-ownership before combining relevant `events`, retained raw agent results, and
-`agent_check_hourly` aggregates.
+ownership before combining relevant `events`, retained raw agent results,
+`agent_check_hourly` and `agent_check_daily` aggregates, and structured central
+incidents. Requests through seven days use hourly buckets; longer requests use
+daily buckets, up to the 90-day API limit. The UI exposes one-day, seven-day,
+and 30-day selections and renders availability plus average and peak latency.
+Availability uses observed remote-agent checks only: missing checks and checks
+omitted during a pause are excluded from the denominator. Future scheduled
+maintenance windows must record explicit intervals and use the same exclusion
+rule.
 
 Before inserting a site, the server normalizes the URL, resolves its hostname
 with a bounded timeout, and rejects any non-global address. A full monitoring
@@ -95,6 +102,10 @@ worker threads so it cannot block the aiohttp/aiogram event loop.
 
 Manual checks are serialized per site within the process. They run the central
 check and collect online-agent results before updating the stored status.
+Each continuous central outage creates or updates one `central_incidents` row;
+recovery closes that interval with recovery diagnostics. These intervals are
+shown alongside, but are not folded into, remote-agent availability because
+successful central checks are not retained as a complete time series.
 
 Feedback starts through the authenticated Mini App API or `/feedback`. A
 persisted `feedback_conversations.waiting_for_user` flag routes the next
@@ -195,18 +206,26 @@ cascades to the feedback transcript; ordinary site deletion does not affect
 feedback.
 
 `agent_check_results` contains short-lived raw results. The hourly maintenance
-job selects expired rows in bounded batches, aggregates each batch into
-`agent_check_hourly`, and deletes the selected rows in the same transaction.
-The job uses its own PostgreSQL connection and runs through `asyncio.to_thread`
-so maintenance does not consume application pool capacity or block the event
-loop. Retention is opt-in through `DB_MAINTENANCE_ENABLED`; the maintenance
-interval is configurable and current defaults keep seven days of raw agent
-results, 90 days of user and bot logs, and 365 days of events. Cleanup requires
-an operator-created concurrent index on raw result
+job selects expired rows in bounded batches, aggregates them first into
+`agent_check_hourly` and later into `agent_check_daily`, and deletes each
+selected source batch in the same transaction. The daily table preserves check
+counts, successes, failures, latency sums and samples, and peak latency for
+longer history views. The job uses its own PostgreSQL connection and runs
+through `asyncio.to_thread` so maintenance does not consume application pool
+capacity or block the event loop. Retention is opt-in through
+`DB_MAINTENANCE_ENABLED`; the maintenance interval is configurable and current
+defaults keep seven days of raw agent results, 30 days of hourly aggregates, 90
+days of user and bot logs, and 365 days of events. Cleanup requires an
+operator-created concurrent index on raw result
 timestamps; the application deliberately avoids building that large index in a
 startup transaction. The guard checks PostgreSQL's `indisready` and `indisvalid`
 flags because an interrupted concurrent build may leave an unusable catalog
 entry with the expected index name.
+
+`central_incidents` stores one durable row per continuous centrally detected
+outage, including start and recovery diagnostics. A partial unique index permits
+only one open incident per site. The current incident fields on `sites` remain
+as compatibility state for existing scheduler and notification behavior.
 
 The central application uses a bounded `ThreadedConnectionPool`. Legacy
 `bot.infra.db` functions and signatures are preserved by compatibility
