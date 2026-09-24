@@ -27,9 +27,9 @@ Current behavior:
 
 - reads and manages the same sites as the Telegram bot;
 - validates signed Telegram `initData` on every API request;
-- verifies site ownership for every mutation;
+- enforces project-owner, manager, and viewer permissions on authenticated reads and writes;
 - supports add, delete, pause, resume, and manual check operations;
-- provides status-counter filters, domain/group/tag search, independent group
+- provides project selection, status-counter filters, domain/group/tag search, independent group
   and tag filtering, and problem-first, name, or recent sorting;
 - supports optional resource groups, up to eight tags per resource, and
   selectable one-day, seven-day, and 30-day history views; the authenticated
@@ -50,6 +50,15 @@ Current behavior:
 
 Static asset URLs are versioned, and the Mini App shell is served with no-cache
 headers to reduce stale Telegram web-view assets after deployment.
+
+## Team Access
+
+Existing resources are backfilled into a personal project owned by their original
+`sites.user_id`. Owners can create additional projects and assign Telegram IDs as
+viewers or managers in the Mini App. A viewer sees statuses and history; a manager
+may manage project sites and maintenance; only the owner changes membership.
+Monitoring alerts and scheduled reports still go to the site owner. Removing a
+user with a shared owned project is refused rather than deleting team resources.
 
 ## Monitoring and Incident Controls
 

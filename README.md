@@ -224,10 +224,15 @@ they use independent authentication:
 - `/admin/` requires `ADMIN_WEB_TOKEN`;
 - the client never supplies a trusted Telegram user ID directly.
 
-The Mini App reuses existing rows keyed by `sites.user_id`; enabling it requires
-no data migration. Mutating API operations verify both the site ID and the
-authenticated Telegram user ID. The resource list is cached only in Telegram's
-current web view session and is refreshed from the server on every opening.
+The Mini App uses explicit projects with an owner and optional `viewer` and
+`manager` members. Additive startup migration creates a personal project for
+every existing site owner and attaches legacy sites without changing their
+`sites.user_id` or deleting data. Owners manage members; managers may add, check,
+pause, tag, schedule maintenance for, and delete project resources; viewers see
+status and history only. The owner remains the alert recipient. Personal projects
+can also be shared. Site and project APIs verify the signed Telegram identity;
+client-side role controls are only a convenience. The resource list is cached
+only in Telegram's current web view session and refreshed on every opening.
 
 Opening `/app/` in a regular browser shows a branded Telegram access page rather
 than the monitoring dashboard. The frontend does not call the Mini App API until
@@ -385,7 +390,7 @@ After deployment, fully close and reopen the Telegram Mini App, then verify:
 3. The add dialog closes using its close button, Telegram Back, Escape, and a
    backdrop tap where supported.
 4. Adding a temporary public domain completes within the configured DNS timeout.
-5. Pause, resume, manual check, and delete affect only the current user's site.
+5. Existing sites appear in Personal; a viewer cannot mutate them, a manager can, and only the owner can change project members.
 6. Feedback closes the Mini App, captures text and attachments in the bot,
    displays them under `/admin/feedback`, and delivers an administrator reply.
 7. Bot polling, scheduled monitoring, admin console, and remote agents continue

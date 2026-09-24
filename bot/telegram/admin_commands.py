@@ -170,7 +170,12 @@ async def admin_remove_user(message: types.Message):
         message.from_user.username
     )
 
-    sites_deleted, logs_deleted, messages_deleted = delete_user_data(target_user_id)
+    try:
+        sites_deleted, logs_deleted, messages_deleted = delete_user_data(target_user_id)
+    except ValueError as exc:
+        if str(exc) != "owned_projects_have_members":
+            raise
+        return await message.answer("У пользователя есть проекты с участниками. Сначала перенесите права или удалите участников.")
 
     if sites_deleted == 0 and logs_deleted == 0 and messages_deleted == 0:
         await message.answer(f"Данные пользователя {target_user_id} не найдены.")

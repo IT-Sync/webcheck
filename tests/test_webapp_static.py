@@ -20,8 +20,8 @@ class WebAppStaticMarkupTest(unittest.TestCase):
     def test_frontend_assets_have_cache_busting_version(self):
         source = INDEX.read_text(encoding="utf-8")
 
-        self.assertIn("/app/static/app.css?v=10", source)
-        self.assertIn("/app/static/app.js?v=10", source)
+        self.assertIn("/app/static/app.css?v=11", source)
+        self.assertIn("/app/static/app.js?v=11", source)
 
     def test_status_metrics_are_filter_controls(self):
         source = INDEX.read_text(encoding="utf-8")
@@ -60,6 +60,19 @@ class WebAppStaticMarkupTest(unittest.TestCase):
         self.assertIn("set_site_tags_by_id", server)
         self.assertIn("create_site_maintenance", server)
         self.assertIn("cancel_site_maintenance", server)
+
+    def test_project_controls_and_role_actions_are_available(self):
+        markup = INDEX.read_text(encoding="utf-8")
+        script = SCRIPT.read_text(encoding="utf-8")
+        server = SERVER.read_text(encoding="utf-8")
+        for control in ('id="project-select"', 'id="site-project"',
+                        'id="team-dialog"', 'id="team-member-form"'):
+            self.assertIn(control, markup)
+        self.assertIn('site.role === "viewer"', script)
+        self.assertIn('project_id: Number(elements.siteProject.value)', script)
+        self.assertIn('api/webapp/projects', script)
+        self.assertIn('get_site_role(site[0], user.id)', server)
+        self.assertIn('add_put("/api/webapp/projects/', server)
 
     def test_feedback_returns_the_user_to_the_bot(self):
         markup = INDEX.read_text(encoding="utf-8")

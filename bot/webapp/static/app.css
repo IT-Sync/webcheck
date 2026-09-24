@@ -156,13 +156,13 @@ code { font-family: "Courier New", monospace; }
 .add-button { padding: 11px 15px; }
 .add-button span { display: inline-block; margin-right: 5px; font-size: 20px; line-height: 10px; vertical-align: -1px; }
 
-.resource-controls { display: grid; grid-template-columns: minmax(160px, 1.2fr) minmax(120px, .7fr) minmax(110px, .65fr) auto minmax(168px, 1fr); align-items: end; gap: 12px; margin: -2px 0 15px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: rgba(8, 18, 15, 0.62); }
+.resource-controls { display: grid; grid-template-columns: minmax(150px, 1.2fr) repeat(3, minmax(95px, .65fr)) auto minmax(150px, 1fr); align-items: end; gap: 12px; margin: -2px 0 15px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: rgba(8, 18, 15, 0.62); }
 .filter-state { display: grid; gap: 4px; min-width: 0; }
 .filter-state span { overflow: hidden; color: var(--paper); font: 600 12px/1.2 Georgia, serif; text-overflow: ellipsis; white-space: nowrap; }
-.filter-state b, .sort-control > span, .search-control > span, .group-control > span, .tag-control > span { color: var(--muted); font: 700 9px/1 "Courier New", monospace; letter-spacing: 0.1em; text-transform: uppercase; }
-.search-control, .group-control, .tag-control { display: grid; gap: 5px; min-width: 0; }
-.search-control input, .group-control select, .tag-control select { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: #0b1714; color: var(--paper); font-size: 11px; }
-.search-control input:focus, .group-control select:focus, .tag-control select:focus { border-color: var(--acid); }
+.filter-state b, .sort-control > span, .search-control > span, .group-control > span, .tag-control > span, .project-control > span { color: var(--muted); font: 700 9px/1 "Courier New", monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+.search-control, .group-control, .tag-control, .project-control { display: grid; gap: 5px; min-width: 0; }
+.search-control input, .group-control select, .tag-control select, .project-control select { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: #0b1714; color: var(--paper); font-size: 11px; }
+.search-control input:focus, .group-control select:focus, .tag-control select:focus, .project-control select:focus { border-color: var(--acid); }
 .sort-control { display: grid; gap: 5px; min-width: 168px; }
 .sort-control > span { text-align: right; }
 .sort-control select { width: 100%; padding: 7px 28px 7px 9px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: #0b1714; color: var(--paper); font-size: 11px; }
@@ -331,3 +331,18 @@ dialog::backdrop { background: rgba(0, 7, 5, 0.78); backdrop-filter: blur(8px); 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
+
+.section-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.team-button { padding: 10px 13px; border: 1px solid rgba(74,199,184,.35); border-radius: 999px; background: rgba(74,199,184,.08); color: var(--cyan); font-size: 12px; font-weight: 700; cursor: pointer; }
+.team-button:hover, .team-button:focus-visible { border-color: var(--cyan); outline: none; }
+.site-project { padding: 4px 7px; border: 1px solid rgba(184,243,74,.2); border-radius: 999px; color: var(--acid); font: 700 8px/1 "Courier New", monospace; white-space: nowrap; }
+.plain-field select { width: 100%; padding: 14px; border: 0; outline: none; background: #08120f; color: var(--paper); font: 14px "Courier New", monospace; }
+.team-dialog .dialog-card { max-width: 560px; }
+.team-identity { margin: 0 0 18px; color: var(--cyan); font: 700 11px "Courier New", monospace; }
+.team-inline-form, .team-member-form { display: flex; gap: 7px; margin: 12px 0 22px; }
+.team-inline-form input, .team-member-form input, .team-member-form select { min-width: 0; flex: 1; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: #08120f; color: var(--paper); }
+.team-member-form select { flex: 0 0 105px; }
+.team-inline-form button, .team-member-form button, .team-member button { padding: 10px 12px; border: 1px solid var(--acid); border-radius: 9px; background: transparent; color: var(--acid); cursor: pointer; }
+.team-member-list { display: grid; gap: 5px; margin-top: 12px; }
+.team-member { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; color: var(--paper); font: 12px "Courier New", monospace; }
+@media (max-width: 480px) { .section-head { align-items: flex-start; } .section-actions { max-width: 180px; } .team-member-form { flex-wrap: wrap; } .team-member-form input { flex-basis: 100%; } }

@@ -804,7 +804,12 @@ async def broadcast_message(request: web.Request) -> web.Response:
 @require_auth
 async def delete_user(request: web.Request) -> web.Response:
     user_id = int(request.match_info["user_id"])
-    sites_deleted, logs_deleted, messages_deleted = delete_user_data(user_id)
+    try:
+        sites_deleted, logs_deleted, messages_deleted = delete_user_data(user_id)
+    except ValueError as exc:
+        if str(exc) != "owned_projects_have_members":
+            raise
+        raise web.HTTPConflict(text="Нельзя удалить владельца проекта с участниками. Сначала перенесите права или удалите участников.")
     log_user_action(
         BOT_OWNER_ID,
         f"web: удалил пользователя {user_id}, сайтов {sites_deleted}, логов {logs_deleted}, сообщений {messages_deleted}",

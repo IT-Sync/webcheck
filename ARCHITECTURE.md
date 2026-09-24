@@ -88,11 +88,19 @@ available, then refreshes `/api/webapp/bootstrap`. Metrics act as status filters
 and the default client-side sort places problematic resources first. The cache
 is a display optimization and is never authoritative.
 
+Sites belong to `projects`, each with an explicit owner; `project_members`
+stores `viewer` and `manager` roles. The additive startup migration backfills
+existing sites into each owner's personal project. `sites.user_id` remains the
+owner and alert recipient for compatibility with scheduling and Telegram bot
+commands. The Mini App lists accessible projects and filters resources by project.
+Viewers can read status and history; managers can mutate sites; only owners can
+manage project members. Database writes enforce these permissions independently
+of UI controls. The owner cannot be removed while a project has members.
+
 Sites have an optional `site_group` field and normalized rows in `site_tags`.
 Search plus independent group and tag filtering happen in the Mini App over the
-authenticated user's bootstrap payload. Group and tag mutations verify site
-ownership on the server. The history endpoint also verifies
-ownership before combining relevant `events`, retained raw agent results,
+authenticated user's bootstrap payload. The history endpoint verifies project
+access before combining relevant `events`, retained raw agent results,
 `agent_check_hourly` and `agent_check_daily` aggregates, and structured central
 incidents. Requests through seven days use hourly buckets; longer requests use
 daily buckets, up to the 90-day API limit. The UI exposes one-day, seven-day,

@@ -303,6 +303,62 @@ class PostgreSQLRepositoryIntegrationTest(unittest.TestCase):
                 repository_module._repository = None
                 sys.modules.pop("bot.infra.db", None)
 
+    def test_project_backfill_and_member_permissions(self):
+        from bot.infra import repository as repository_module
+
+        connection_info = parse_dsn(os.environ["TEST_DATABASE_URL"])
+        database_env = {
+            "DB_NAME": connection_info["dbname"],
+            "DB_USER": connection_info["user"],
+            "DB_PASS": connection_info["password"],
+            "DB_HOST": connection_info["host"],
+            "DB_PORT": connection_info["port"],
+        }
+        sys.modules.pop("bot.infra.db", None)
+        repository_module._repository = None
+        with patch.dict(os.environ, database_env):
+            db = importlib.import_module("bot.infra.db")
+            try:
+                db.migrate_add_notification_flags()
+                owner_id, viewer_id, manager_id = 91234001, 91234002, 91234003
+                db.c.execute(
+                    "INSERT INTO sites (user_id, url) VALUES (%s, %s) RETURNING id",
+                    (owner_id, "https://legacy-team.example"),
+                )
+                site_id = db.c.fetchone()[0]
+                db.conn.commit()
+                db.migrate_add_notification_flags()
+                db.migrate_add_notification_flags()
+                projects = db.get_projects_for_user(owner_id)
+                personal = next(item for item in projects if item["is_personal"])
+                self.assertEqual(db.get_site_role(site_id, owner_id), "owner")
+                self.assertEqual(db.get_site_for_user(site_id, owner_id)[-1], personal["id"])
+                self.assertTrue(db.set_project_member(personal["id"], owner_id, viewer_id, "viewer"))
+                self.assertEqual(db.get_site_role(site_id, viewer_id), "viewer")
+                self.assertIsNotNone(db.get_site_history_for_user(site_id, viewer_id))
+                self.assertFalse(db.set_site_paused_by_id(site_id, viewer_id, True))
+                self.assertFalse(db.set_site_tags_by_id(site_id, viewer_id, ["secret"]))
+                self.assertFalse(db.delete_site_by_id(site_id, viewer_id))
+                self.assertFalse(db.set_project_member(personal["id"], viewer_id, manager_id, "manager"))
+                self.assertTrue(db.set_project_member(personal["id"], owner_id, manager_id, "manager"))
+                self.assertEqual(db.get_site_role(site_id, manager_id), "manager")
+                self.assertTrue(db.set_site_paused_by_id(site_id, manager_id, True))
+                self.assertTrue(db.set_site_tags_by_id(site_id, manager_id, ["shared"]))
+                self.assertEqual(next(row for row in db.get_sites_with_pause(viewer_id)
+                                      if row[0] == site_id)[13], "viewer")
+                self.assertEqual(next(row for row in db.get_report_sites(viewer_id)
+                                      if row["id"] == site_id)["tags"], ["shared"])
+                with self.assertRaisesRegex(ValueError, "owned_projects_have_members"):
+                    db.delete_user_data(owner_id)
+                self.assertTrue(db.remove_project_member(personal["id"], owner_id, viewer_id))
+                self.assertIsNone(db.get_site_for_user(site_id, viewer_id))
+                self.assertTrue(db.remove_project_member(personal["id"], owner_id, manager_id))
+                self.assertTrue(db.delete_site_by_id(site_id, owner_id))
+            finally:
+                db.repository.close()
+                repository_module._repository = None
+                sys.modules.pop("bot.infra.db", None)
+
     def test_pool_supports_concurrent_transactions(self):
         barrier = threading.Barrier(3)
         errors = []

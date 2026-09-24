@@ -14,24 +14,208 @@ c = conn.cursor()
 
 ensure_base_schema(c, conn)
 
+# Team access is resolved from the project, not from the legacy site owner.
+def _site_access(alias, manager=False):
+    role = "AND member.role = 'manager'" if manager else ""
+    return f"""(
+        ({alias}.project_id IS NULL AND {alias}.user_id = %s)
+        OR EXISTS (
+            SELECT 1 FROM projects AS project
+            LEFT JOIN project_members AS member
+              ON member.project_id = project.id AND member.user_id = %s
+            WHERE project.id = {alias}.project_id
+              AND (project.owner_user_id = %s OR (member.user_id IS NOT NULL {role}))
+        )
+    )"""
+
+
+def ensure_personal_project(user_id):
+    c.execute("SELECT id FROM projects WHERE owner_user_id = %s AND is_personal", (user_id,))
+    row = c.fetchone()
+    if row:
+        return row[0]
+    c.execute("""
+        INSERT INTO projects (owner_user_id, name, is_personal)
+        VALUES (%s, 'Personal', TRUE)
+        ON CONFLICT (owner_user_id) WHERE is_personal
+        DO UPDATE SET owner_user_id = EXCLUDED.owner_user_id
+        RETURNING id
+    """, (user_id,))
+    project_id = c.fetchone()[0]
+    conn.commit()
+    return project_id
+
+
+def create_project(owner_user_id, name):
+    c.execute(
+        "INSERT INTO projects (owner_user_id, name) VALUES (%s, %s) RETURNING id",
+        (owner_user_id, name),
+    )
+    project_id = c.fetchone()[0]
+    conn.commit()
+    return project_id
+
+
+def get_projects_for_user(user_id):
+    ensure_personal_project(user_id)
+    c.execute("""
+        SELECT project.id, project.owner_user_id, project.name,
+               project.is_personal,
+               CASE WHEN project.owner_user_id = %s THEN 'owner' ELSE member.role END
+        FROM projects AS project
+        LEFT JOIN project_members AS member
+          ON member.project_id = project.id AND member.user_id = %s
+        WHERE project.owner_user_id = %s OR member.user_id IS NOT NULL
+        ORDER BY project.is_personal DESC, LOWER(project.name), project.id
+    """, (user_id, user_id, user_id))
+    return [dict(id=row[0], owner_user_id=row[1], name=row[2],
+                 is_personal=row[3], role=row[4]) for row in c.fetchall()]
+
+
+def get_project_role(project_id, user_id):
+    c.execute("""
+        SELECT CASE WHEN project.owner_user_id = %s THEN 'owner'
+                    ELSE member.role END
+        FROM projects AS project
+        LEFT JOIN project_members AS member
+          ON member.project_id = project.id AND member.user_id = %s
+        WHERE project.id = %s
+          AND (project.owner_user_id = %s OR member.user_id IS NOT NULL)
+    """, (user_id, user_id, project_id, user_id))
+    row = c.fetchone()
+    return row[0] if row else None
+
+
+def get_project_members(project_id, user_id):
+    if not get_project_role(project_id, user_id):
+        return None
+    c.execute("""
+        SELECT project.owner_user_id, member.user_id, member.role
+        FROM projects AS project
+        LEFT JOIN project_members AS member ON member.project_id = project.id
+        WHERE project.id = %s ORDER BY member.user_id
+    """, (project_id,))
+    rows = c.fetchall()
+    return ([dict(user_id=rows[0][0], role='owner')]
+            + [dict(user_id=row[1], role=row[2]) for row in rows if row[1] is not None])
+
+
+def set_project_member(project_id, owner_user_id, member_user_id, role):
+    if role not in ('viewer', 'manager') or member_user_id <= 0:
+        raise ValueError('invalid_member')
+    try:
+        c.execute("SELECT owner_user_id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+        row = c.fetchone()
+        if not row or row[0] != owner_user_id or member_user_id == owner_user_id:
+            conn.rollback()
+            return False
+        c.execute("""
+            INSERT INTO project_members (project_id, user_id, role)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (project_id, user_id) DO UPDATE SET role = EXCLUDED.role
+        """, (project_id, member_user_id, role))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def remove_project_member(project_id, owner_user_id, member_user_id):
+    try:
+        c.execute("SELECT owner_user_id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+        row = c.fetchone()
+        if not row or row[0] != owner_user_id:
+            conn.rollback()
+            return False
+        c.execute("DELETE FROM project_members WHERE project_id = %s AND user_id = %s",
+                  (project_id, member_user_id))
+        removed = c.rowcount > 0
+        conn.commit()
+        return removed
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def get_project_site_count(project_id):
+    c.execute("SELECT COUNT(*) FROM sites WHERE project_id = %s", (project_id,))
+    return c.fetchone()[0]
+
+
+def get_site_by_url_in_project(project_id, url):
+    c.execute("SELECT * FROM sites WHERE project_id = %s AND url = %s LIMIT 1",
+              (project_id, url))
+    return c.fetchone()
+
+
+def get_site_role(site_id, user_id):
+    c.execute("""
+        SELECT CASE
+            WHEN project.owner_user_id = %s OR
+                 (site.project_id IS NULL AND site.user_id = %s) THEN 'owner'
+            ELSE member.role END
+        FROM sites AS site
+        LEFT JOIN projects AS project ON project.id = site.project_id
+        LEFT JOIN project_members AS member
+          ON member.project_id = site.project_id AND member.user_id = %s
+        WHERE site.id = %s AND (
+            project.owner_user_id = %s OR member.user_id IS NOT NULL
+            OR (site.project_id IS NULL AND site.user_id = %s)
+        )
+    """, (user_id, user_id, user_id, site_id, user_id, user_id))
+    row = c.fetchone()
+    return row[0] if row else None
+
+
+def _lock_managed_site(site_id, user_id):
+    c.execute("""
+        SELECT site.id FROM sites AS site
+        LEFT JOIN projects AS project ON project.id = site.project_id
+        LEFT JOIN project_members AS member
+          ON member.project_id = site.project_id AND member.user_id = %s
+        WHERE site.id = %s AND (
+            project.owner_user_id = %s OR member.role = 'manager'
+            OR (site.project_id IS NULL AND site.user_id = %s)
+        ) FOR UPDATE OF site
+    """, (user_id, site_id, user_id, user_id))
+    return c.fetchone() is not None
+
+
+def add_site_to_project(actor_user_id, project_id, url, username=None, site_group=''):
+    try:
+        c.execute("SELECT owner_user_id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+        row = c.fetchone()
+        if not row or get_project_role(project_id, actor_user_id) not in ('owner', 'manager'):
+            conn.rollback()
+            return None
+        owner_user_id = row[0]
+        c.execute("""
+            INSERT INTO sites (user_id, username, url, site_group, project_id)
+            VALUES (%s, %s, %s, %s, %s) RETURNING id
+        """, (owner_user_id, username if owner_user_id == actor_user_id else None,
+              url, site_group, project_id))
+        site_id = c.fetchone()[0]
+        conn.commit()
+        return site_id
+    except Exception:
+        conn.rollback()
+        raise
+
 # Методы
 def add_site(user_id, url, username=None, site_group=""):
-    c.execute(
-        "INSERT INTO sites (user_id, username, url, site_group) VALUES (%s, %s, %s, %s) RETURNING id",
-        (user_id, username, url, site_group),
-    )
-    site_id = c.fetchone()[0]
-    conn.commit()
-    return site_id
+    project_id = ensure_personal_project(user_id)
+    return add_site_to_project(user_id, project_id, url, username, site_group)
 
 def get_sites(user_id):
-    c.execute("SELECT * FROM sites WHERE user_id = %s", (user_id,))
+    c.execute(f"SELECT * FROM sites AS site WHERE {_site_access('site')} ORDER BY site.id",
+              (user_id, user_id, user_id))
     return c.fetchall()
 
 def get_sites_with_pause(user_id):
     now = datetime.utcnow()
     c.execute(
-        """
+        f"""
         SELECT site.id, site.user_id, site.username, site.url,
                site.last_status, site.last_checked,
                (COALESCE(site.is_paused, FALSE)
@@ -40,8 +224,15 @@ def get_sites_with_pause(user_id):
                COALESCE(site.site_group, ''),
                maintenance.id IS NOT NULL AS is_maintenance,
                maintenance.starts_at, maintenance.ends_at, maintenance.reason,
-               COALESCE(tags.values, ARRAY[]::text[])
+               COALESCE(tags.values, ARRAY[]::text[]),
+               CASE WHEN project.owner_user_id = %s OR
+                         (site.project_id IS NULL AND site.user_id = %s)
+                    THEN 'owner' ELSE member.role END,
+               site.project_id, project.name, project.owner_user_id
         FROM sites AS site
+        LEFT JOIN projects AS project ON project.id = site.project_id
+        LEFT JOIN project_members AS member
+          ON member.project_id = site.project_id AND member.user_id = %s
         LEFT JOIN LATERAL (
             SELECT mw.id, mw.starts_at, mw.ends_at, mw.reason
             FROM maintenance_windows AS mw
@@ -57,10 +248,11 @@ def get_sites_with_pause(user_id):
             FROM site_tags
             WHERE site_id = site.id
         ) AS tags ON TRUE
-        WHERE site.user_id = %s
+        WHERE {_site_access('site')}
         ORDER BY site.id
         """,
-        (now, now, now, user_id),
+        (now, user_id, user_id, user_id, now, now,
+         user_id, user_id, user_id),
     )
     return c.fetchall()
 
@@ -69,41 +261,45 @@ def get_site_by_id(site_id):
     return c.fetchone()
 
 def get_site_for_user(site_id, user_id):
-    c.execute("SELECT * FROM sites WHERE id = %s AND user_id = %s", (site_id, user_id))
+    c.execute(f"SELECT * FROM sites AS site WHERE site.id = %s AND {_site_access('site')}",
+              (site_id, user_id, user_id, user_id))
     return c.fetchone()
 
 def get_site_by_url_for_user(user_id, url):
-    c.execute("SELECT * FROM sites WHERE user_id = %s AND url = %s", (user_id, url))
+    c.execute(f"SELECT * FROM sites AS site WHERE site.url = %s AND {_site_access('site')} ORDER BY site.id LIMIT 1",
+              (url, user_id, user_id, user_id))
     return c.fetchone()
 
 def delete_site(user_id, url):
-    c.execute("DELETE FROM sites WHERE user_id = %s AND url = %s", (user_id, url))
+    c.execute(f"DELETE FROM sites AS site WHERE site.url = %s AND {_site_access('site', True)}",
+              (url, user_id, user_id, user_id))
     conn.commit()
     return c.rowcount > 0
 
 def delete_site_by_id(site_id, user_id):
-    c.execute("DELETE FROM sites WHERE id = %s AND user_id = %s", (site_id, user_id))
+    c.execute(f"DELETE FROM sites AS site WHERE site.id = %s AND {_site_access('site', True)}",
+              (site_id, user_id, user_id, user_id))
     conn.commit()
     return c.rowcount > 0
 
 def set_site_paused_by_id(site_id, user_id, paused):
     if paused:
         c.execute(
-            "UPDATE sites SET is_paused = %s WHERE id = %s AND user_id = %s",
-            (paused, site_id, user_id)
+            f"UPDATE sites AS site SET is_paused = %s WHERE site.id = %s AND {_site_access('site', True)}",
+            (paused, site_id, user_id, user_id, user_id)
         )
     else:
         c.execute(
-            "UPDATE sites SET is_paused = %s, paused_until = NULL WHERE id = %s AND user_id = %s",
-            (paused, site_id, user_id)
+            f"UPDATE sites AS site SET is_paused = %s, paused_until = NULL WHERE site.id = %s AND {_site_access('site', True)}",
+            (paused, site_id, user_id, user_id, user_id)
         )
     conn.commit()
     return c.rowcount > 0
 
 def set_site_paused_until_by_id(site_id, user_id, paused_until):
     c.execute(
-        "UPDATE sites SET paused_until = %s WHERE id = %s AND user_id = %s",
-        (paused_until, site_id, user_id)
+        f"UPDATE sites AS site SET paused_until = %s WHERE site.id = %s AND {_site_access('site', True)}",
+        (paused_until, site_id, user_id, user_id, user_id)
     )
     conn.commit()
     return c.rowcount > 0
@@ -111,8 +307,8 @@ def set_site_paused_until_by_id(site_id, user_id, paused_until):
 
 def set_site_group_by_id(site_id, user_id, site_group):
     c.execute(
-        "UPDATE sites SET site_group = %s WHERE id = %s AND user_id = %s",
-        (site_group, site_id, user_id),
+        f"UPDATE sites AS site SET site_group = %s WHERE site.id = %s AND {_site_access('site', True)}",
+        (site_group, site_id, user_id, user_id, user_id),
     )
     conn.commit()
     return c.rowcount > 0
@@ -120,11 +316,7 @@ def set_site_group_by_id(site_id, user_id, site_group):
 
 def set_site_tags_by_id(site_id, user_id, tags):
     try:
-        c.execute(
-            "SELECT 1 FROM sites WHERE id = %s AND user_id = %s FOR UPDATE",
-            (site_id, user_id),
-        )
-        if not c.fetchone():
+        if not _lock_managed_site(site_id, user_id):
             conn.rollback()
             return False
         c.execute("DELETE FROM site_tags WHERE site_id = %s", (site_id,))
@@ -142,11 +334,7 @@ def set_site_tags_by_id(site_id, user_id, tags):
 
 def create_maintenance_window(site_id, user_id, starts_at, ends_at, reason=""):
     try:
-        c.execute(
-            "SELECT 1 FROM sites WHERE id = %s AND user_id = %s FOR UPDATE",
-            (site_id, user_id),
-        )
-        if not c.fetchone():
+        if not _lock_managed_site(site_id, user_id):
             conn.rollback()
             return None
         c.execute(
@@ -184,10 +372,16 @@ def cancel_maintenance_window(window_id, site_id, user_id, cancelled_at=None):
         SET cancelled_at = %s
         FROM sites AS site
         WHERE mw.id = %s AND mw.site_id = %s
-          AND mw.site_id = site.id AND site.user_id = %s
+          AND mw.site_id = site.id
+          AND (site.project_id IS NULL AND site.user_id = %s
+               OR EXISTS (SELECT 1 FROM projects AS project
+                          LEFT JOIN project_members AS member
+                            ON member.project_id = project.id AND member.user_id = %s
+                          WHERE project.id = site.project_id
+                            AND (project.owner_user_id = %s OR member.role = 'manager')))
           AND mw.cancelled_at IS NULL AND mw.ends_at > %s
         """,
-        (now, window_id, site_id, user_id, now),
+        (now, window_id, site_id, user_id, user_id, user_id, now),
     )
     conn.commit()
     return c.rowcount > 0
@@ -196,16 +390,16 @@ def cancel_maintenance_window(window_id, site_id, user_id, cancelled_at=None):
 def get_maintenance_windows_for_site(site_id, user_id, since=None):
     since = since or datetime.utcnow()
     c.execute(
-        """
+        f"""
         SELECT mw.id, mw.starts_at, mw.ends_at, mw.reason,
                mw.created_at, mw.cancelled_at
         FROM maintenance_windows AS mw
         JOIN sites AS site ON site.id = mw.site_id
-        WHERE mw.site_id = %s AND site.user_id = %s
+        WHERE mw.site_id = %s AND {_site_access('site')}
           AND mw.ends_at >= %s AND mw.cancelled_at IS NULL
         ORDER BY mw.starts_at, mw.id
         """,
-        (site_id, user_id, since),
+        (site_id, user_id, user_id, user_id, since),
     )
     return [
         {
@@ -216,16 +410,9 @@ def get_maintenance_windows_for_site(site_id, user_id, since=None):
     ]
 
 def set_site_paused(user_id, url, paused):
-    if paused:
-        c.execute(
-            "UPDATE sites SET is_paused = %s WHERE user_id = %s AND url = %s",
-            (paused, user_id, url)
-        )
-    else:
-        c.execute(
-            "UPDATE sites SET is_paused = %s, paused_until = NULL WHERE user_id = %s AND url = %s",
-            (paused, user_id, url)
-        )
+    updates = "is_paused = %s" if paused else "is_paused = %s, paused_until = NULL"
+    c.execute(f"UPDATE sites AS site SET {updates} WHERE site.url = %s AND {_site_access('site', True)}",
+              (paused, url, user_id, user_id, user_id))
     conn.commit()
     return c.rowcount > 0
 
@@ -253,14 +440,27 @@ def admin_delete_site_by_id(site_id):
     return c.rowcount > 0
 
 def delete_user_sites(user_id):
-    """Удаляет только сайты пользователя, без очистки логов."""
-    c.execute("DELETE FROM sites WHERE user_id = %s", (user_id,))
+    """Remove only private sites when a user blocks the bot."""
+    c.execute("""
+        DELETE FROM sites AS site WHERE site.user_id = %s
+          AND NOT EXISTS (
+              SELECT 1 FROM project_members AS member
+              WHERE member.project_id = site.project_id
+          )
+    """, (user_id,))
     deleted = c.rowcount
     conn.commit()
     return deleted
 
 def delete_user_data(user_id):
-    """Полностью удаляет пользователя: сайты и его действия в логах."""
+    """Remove personal data only when no owned project has team members."""
+    c.execute("""
+        SELECT 1 FROM projects AS project
+        JOIN project_members AS member ON member.project_id = project.id
+        WHERE project.owner_user_id = %s LIMIT 1
+    """, (user_id,))
+    if c.fetchone():
+        raise ValueError("owned_projects_have_members")
     c.execute("DELETE FROM sites WHERE user_id = %s", (user_id,))
     sites_deleted = c.rowcount
     c.execute("DELETE FROM user_logs WHERE user_id = %s", (user_id,))
@@ -844,8 +1044,8 @@ def get_report_sites(user_id=None):
     params = [now, now, now - timedelta(days=7), now, now]
     where = ""
     if user_id is not None:
-        where = "WHERE site.user_id = %s"
-        params.append(user_id)
+        where = f"WHERE {_site_access('site')}"
+        params.extend((user_id, user_id, user_id))
     c.execute(f"""
         SELECT site.id, site.user_id, site.username, site.url,
                site.last_status, site.last_checked,
@@ -1706,6 +1906,23 @@ def migrate_add_notification_flags():
             END IF;
         END
         $$;
+    """)
+    c.execute("ALTER TABLE sites ADD COLUMN IF NOT EXISTS project_id BIGINT REFERENCES projects(id)")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_personal_owner ON projects(owner_user_id) WHERE is_personal")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sites_project_id ON sites(project_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_project_members_user_id ON project_members(user_id)")
+    c.execute("""
+        INSERT INTO projects (owner_user_id, name, is_personal)
+        SELECT DISTINCT user_id, 'Personal', TRUE FROM sites
+        WHERE user_id IS NOT NULL
+        ON CONFLICT (owner_user_id) WHERE is_personal DO NOTHING
+    """)
+    c.execute("""
+        UPDATE sites AS site SET project_id = project.id
+        FROM projects AS project
+        WHERE site.project_id IS NULL
+          AND project.owner_user_id = site.user_id
+          AND project.is_personal
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_sites_user_id ON sites(user_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sites_url ON sites(url)")

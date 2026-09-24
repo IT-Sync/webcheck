@@ -15,7 +15,7 @@
   document.body.classList.add("telegram-access");
   const state = {
     sites: [], user: null, limit: 0, loaded: false, filter: "all",
-    sort: "priority", query: "", group: "all", tag: "all", historySite: null,
+    sort: "priority", query: "", group: "all", tag: "all", project: "all", projects: [], historySite: null,
     maintenanceSite: null,
     historyDays: 7, historyRequest: 0,
   };
@@ -40,6 +40,18 @@
     search: document.querySelector("#site-search"),
     group: document.querySelector("#group-select"),
     tag: document.querySelector("#tag-select"),
+    project: document.querySelector("#project-select"),
+    siteProject: document.querySelector("#site-project"),
+    teamDialog: document.querySelector("#team-dialog"),
+    teamIdentity: document.querySelector("#team-identity"),
+    teamCreateForm: document.querySelector("#team-create-form"),
+    teamProjectName: document.querySelector("#team-project-name"),
+    teamProjectSelect: document.querySelector("#team-project-select"),
+    teamMemberList: document.querySelector("#team-member-list"),
+    teamMemberForm: document.querySelector("#team-member-form"),
+    teamMemberId: document.querySelector("#team-member-id"),
+    teamMemberRole: document.querySelector("#team-member-role"),
+    teamError: document.querySelector("#team-error"),
     monitorSection: document.querySelector("#monitor-section"),
     maintenanceDialog: document.querySelector("#maintenance-dialog"),
     maintenanceForm: document.querySelector("#maintenance-form"),
@@ -154,8 +166,9 @@
         || site.status_kind === state.filter;
       const groupMatches = state.group === "all" || (site.site_group || "") === state.group;
       const tagMatches = state.tag === "all" || (site.tags || []).includes(state.tag);
+      const projectMatches = state.project === "all" || String(site.project_id) === state.project;
       const haystack = [site.url, site.site_group || "", ...(site.tags || [])].join(" ").toLocaleLowerCase("ru");
-      return statusMatches && groupMatches && tagMatches && haystack.includes(state.query);
+      return statusMatches && groupMatches && tagMatches && projectMatches && haystack.includes(state.query);
     });
     const priority = { down: 0, warning: 1, pending: 2, up: 3, maintenance: 4, paused: 5 };
     return filtered.sort((left, right) => {
@@ -185,6 +198,7 @@
     card.querySelector(".latency").textContent = latencyFromStatus(site.last_status);
     card.querySelector(".site-details").textContent = site.last_status || "Первый замер будет выполнен по расписанию или вручную.";
     card.querySelector(".status-badge b").textContent = statusLabel(site);
+    card.querySelector(".site-project").textContent = `${site.project_name || "Personal"} · ${site.role || "owner"}`;
     const groupBadge = card.querySelector(".site-group");
     if (site.site_group) {
       groupBadge.textContent = site.site_group;
@@ -204,6 +218,9 @@
     const toggle = card.querySelector('[data-action="toggle"]');
     toggle.textContent = site.is_maintenance ? "Идёт обслуживание" : (site.is_paused ? "Возобновить" : "Поставить на паузу");
     toggle.disabled = site.is_maintenance;
+    if (site.role === "viewer") {
+      actions.querySelectorAll('button[data-action]:not([data-action="history"])').forEach((button) => button.remove());
+    }
 
     more.addEventListener("click", () => {
       const expanded = card.classList.toggle("expanded");
@@ -252,6 +269,7 @@
     elements.filterLabel.textContent = ({ all: "Все ресурсы", up: "Ресурсы в сети", attention: "Требуют внимания", paused: "Мониторинг на паузе" })[state.filter];
     renderGroups();
     renderTags();
+    renderProjects();
     updateMetrics();
   }
 
@@ -279,6 +297,21 @@
     elements.tag.value = state.tag;
   }
 
+  function renderProjects() {
+    const selected = state.project;
+    elements.project.replaceChildren(new Option("Все проекты", "all"),
+      ...state.projects.map((project) => new Option(project.name, String(project.id))));
+    state.project = state.projects.some((project) => String(project.id) === selected) ? selected : "all";
+    elements.project.value = state.project;
+    const editable = state.projects.filter((project) => project.role !== "viewer");
+    const selectedForAdd = elements.siteProject.value;
+    elements.siteProject.replaceChildren(...editable.map((project) => new Option(project.name, String(project.id))));
+    const preferred = editable.find((project) => String(project.id) === selectedForAdd)
+      || editable.find((project) => String(project.id) === state.project)
+      || editable.find((project) => project.is_personal);
+    if (preferred) elements.siteProject.value = String(preferred.id);
+  }
+
   function setFilter(filter, { scroll = true } = {}) {
     state.filter = filter;
     render();
@@ -288,6 +321,7 @@
 
   function applyBootstrap(payload, { cache = true } = {}) {
     state.sites = payload.sites || [];
+    state.projects = payload.projects || [];
     state.user = payload.user || null;
     state.limit = payload.limits?.sites || 0;
     state.loaded = true;
@@ -694,11 +728,102 @@
     }
   }
 
+  function teamFailure(error) {
+    elements.teamError.textContent = error.message;
+    elements.teamError.classList.remove("hidden");
+  }
+
+  async function loadTeamMembers() {
+    const id = Number(elements.teamProjectSelect.value);
+    const project = state.projects.find((item) => item.id === id);
+    elements.teamMemberForm.hidden = !project || project.role !== "owner";
+    elements.teamMemberList.textContent = "Загружаем участников…";
+    if (!project) return;
+    try {
+      const payload = await api(`/api/webapp/projects/${id}/members`);
+      if (Number(elements.teamProjectSelect.value) !== id) return;
+      elements.teamMemberList.replaceChildren(...payload.members.map((member) => {
+        const row = document.createElement("div");
+        const label = document.createElement("span");
+        row.className = "team-member";
+        label.textContent = `${member.user_id} · ${member.role}`;
+        row.append(label);
+        if (project.role === "owner" && member.role !== "owner") {
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "Убрать";
+          remove.addEventListener("click", async () => {
+            remove.disabled = true;
+            try {
+              await api(`/api/webapp/projects/${id}/members/${member.user_id}`, { method: "DELETE" });
+              await Promise.all([loadTeamMembers(), load()]);
+            } catch (error) { teamFailure(error); remove.disabled = false; }
+          });
+          row.append(remove);
+        }
+        return row;
+      }));
+    } catch (error) { teamFailure(error); }
+  }
+
+  function renderTeamProjects(preferredId) {
+    const selected = String(preferredId || elements.teamProjectSelect.value || "");
+    elements.teamProjectSelect.replaceChildren(...state.projects.map((project) =>
+      new Option(`${project.name} · ${project.role}`, String(project.id))));
+    if (state.projects.some((project) => String(project.id) === selected)) {
+      elements.teamProjectSelect.value = selected;
+    }
+    loadTeamMembers();
+  }
+
+  function openTeam() {
+    elements.teamError.classList.add("hidden");
+    elements.teamIdentity.textContent = `Ваш Telegram ID: ${state.user?.id || "—"}`;
+    elements.teamDialog.showModal();
+    document.body.classList.add("dialog-open");
+    telegram?.BackButton?.show();
+    renderTeamProjects();
+    haptic();
+  }
+
+  function closeTeam() {
+    if (elements.teamDialog.open) elements.teamDialog.close();
+  }
+
+  async function createTeamProject(event) {
+    event.preventDefault();
+    elements.teamError.classList.add("hidden");
+    try {
+      const payload = await api("/api/webapp/projects", {
+        method: "POST", body: JSON.stringify({ name: elements.teamProjectName.value }),
+      });
+      elements.teamProjectName.value = "";
+      await load();
+      renderTeamProjects(payload.project_id);
+    } catch (error) { teamFailure(error); }
+  }
+
+  async function saveTeamMember(event) {
+    event.preventDefault();
+    elements.teamError.classList.add("hidden");
+    const projectId = Number(elements.teamProjectSelect.value);
+    const memberId = Number(elements.teamMemberId.value);
+    try {
+      await api(`/api/webapp/projects/${projectId}/members/${memberId}`, {
+        method: "PUT", body: JSON.stringify({ role: elements.teamMemberRole.value }),
+      });
+      elements.teamMemberId.value = "";
+      await loadTeamMembers();
+    } catch (error) { teamFailure(error); }
+  }
+
   function openAdd() {
     elements.formError.classList.add("hidden");
     elements.input.value = "";
     elements.groupInput.value = "";
     elements.tagsInput.value = "";
+    const selectedProject = state.projects.find((project) => String(project.id) === state.project && project.role !== "viewer");
+    if (selectedProject) elements.siteProject.value = String(selectedProject.id);
     elements.dialog.showModal();
     document.body.classList.add("dialog-open");
     telegram?.BackButton?.show();
@@ -731,7 +856,7 @@
     try {
       const payload = await api("/api/webapp/sites", {
         method: "POST",
-        body: JSON.stringify({ url: elements.input.value, site_group: elements.groupInput.value, tags: elements.tagsInput.value }),
+        body: JSON.stringify({ url: elements.input.value, project_id: Number(elements.siteProject.value), site_group: elements.groupInput.value, tags: elements.tagsInput.value }),
         timeoutMs: 8000,
       });
       state.sites.push(payload.site);
@@ -784,6 +909,20 @@
     state.group = elements.group.value;
     render();
   });
+  elements.project.addEventListener("change", () => {
+    state.project = elements.project.value;
+    render();
+  });
+  document.querySelector("#open-team").addEventListener("click", openTeam);
+  document.querySelector("#close-team").addEventListener("click", closeTeam);
+  elements.teamCreateForm.addEventListener("submit", createTeamProject);
+  elements.teamMemberForm.addEventListener("submit", saveTeamMember);
+  elements.teamProjectSelect.addEventListener("change", loadTeamMembers);
+  elements.teamDialog.addEventListener("close", cleanupAddDialog);
+  elements.teamDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeTeam(); });
+  elements.teamDialog.addEventListener("click", (event) => {
+    if (event.target === elements.teamDialog) closeTeam();
+  });
   elements.tag.addEventListener("change", () => {
     state.tag = elements.tag.value;
     render();
@@ -829,6 +968,7 @@
   telegram?.BackButton?.onClick(closeAdd);
   telegram?.BackButton?.onClick(closeHistory);
   telegram?.BackButton?.onClick(closeMaintenance);
+  telegram?.BackButton?.onClick(closeTeam);
 
   telegram?.ready();
   telegram?.expand();

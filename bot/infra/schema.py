@@ -11,6 +11,22 @@ def ensure_base_schema(cursor, connection):
         last_checked TIMESTAMP
     )''')
 
+    cursor.execute('''CREATE TABLE IF NOT EXISTS projects (
+        id BIGSERIAL PRIMARY KEY,
+        owner_user_id BIGINT NOT NULL,
+        name TEXT NOT NULL,
+        is_personal BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS project_members (
+        project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        user_id BIGINT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('viewer', 'manager')),
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (project_id, user_id)
+    )''')
+
     cursor.execute('''CREATE TABLE IF NOT EXISTS events (
         id SERIAL PRIMARY KEY,
         url TEXT,

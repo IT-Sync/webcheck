@@ -7,9 +7,9 @@
   <meta name="theme-color" content="#07110f">
   <meta name="robots" content="noindex, nofollow">
   <title>Webcheck</title>
-  <link rel="stylesheet" href="/app/static/app.css?v=10">
+  <link rel="stylesheet" href="/app/static/app.css?v=11">
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <script src="/app/static/app.js?v=10" defer></script>
+  <script src="/app/static/app.js?v=11" defer></script>
 </head>
 <body>
   <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -116,15 +116,20 @@
           <p class="eyebrow">MONITORED ENDPOINTS</p>
           <h2>Ваши ресурсы</h2>
         </div>
-        <button class="add-button" id="open-add" type="button">
-          <span>+</span> Добавить
-        </button>
+        <div class="section-actions">
+          <button class="team-button" id="open-team" type="button">◈ Проекты и участники</button>
+          <button class="add-button" id="open-add" type="button"><span>+</span> Добавить</button>
+        </div>
       </div>
 
       <div class="resource-controls">
         <label class="search-control" for="site-search">
           <span>Поиск</span>
           <input id="site-search" type="search" placeholder="Домен, группа или тег" autocomplete="off">
+        </label>
+        <label class="project-control" for="project-select">
+          <span>Проект</span>
+          <select id="project-select"><option value="all">Все проекты</option></select>
         </label>
         <label class="group-control" for="group-select">
           <span>Группа</span>
@@ -189,6 +194,8 @@
         <span>https://</span>
         <input id="site-url" name="url" inputmode="url" autocomplete="url" placeholder="example.com" required>
       </div>
+      <label for="site-project">Проект</label>
+      <div class="plain-field"><select id="site-project" required></select></div>
       <label for="site-group">Группа <small>необязательно</small></label>
       <div class="plain-field">
         <input id="site-group" name="site_group" maxlength="40" autocomplete="off" placeholder="Например, Production">
@@ -200,6 +207,29 @@
       <p class="form-error hidden" id="form-error"></p>
       <button class="submit-button" id="add-submit" type="submit">Добавить в мониторинг</button>
     </form>
+  </dialog>
+
+  <dialog id="team-dialog" class="team-dialog">
+    <section class="dialog-card">
+      <button class="dialog-close" id="close-team" aria-label="Закрыть" type="button">×</button>
+      <p class="eyebrow">PROJECT ACCESS / TEAM</p>
+      <h2>Проекты и доступ</h2>
+      <p class="dialog-copy">Владелец приглашает по Telegram ID. Manager меняет ресурсы; viewer видит статусы и историю. Алерты получает владелец.</p>
+      <p class="team-identity" id="team-identity"></p>
+      <form id="team-create-form" class="team-inline-form">
+        <input id="team-project-name" maxlength="40" required placeholder="Новый проект" aria-label="Название нового проекта">
+        <button type="submit">Создать</button>
+      </form>
+      <label for="team-project-select">Участники проекта</label>
+      <div class="plain-field"><select id="team-project-select"></select></div>
+      <div id="team-member-list" class="team-member-list"></div>
+      <form id="team-member-form" class="team-member-form">
+        <input id="team-member-id" type="number" min="1" required placeholder="Telegram ID" aria-label="Telegram ID участника">
+        <select id="team-member-role" aria-label="Роль участника"><option value="viewer">viewer</option><option value="manager">manager</option></select>
+        <button type="submit">Назначить</button>
+      </form>
+      <p class="form-error hidden" id="team-error"></p>
+    </section>
   </dialog>
 
   <dialog id="maintenance-dialog" class="maintenance-dialog">
@@ -261,6 +291,7 @@
             <span class="status-badge"><i></i><b></b></span>
             <h3 class="site-host"></h3>
             <span class="site-group hidden"></span>
+            <span class="site-project"></span>
             <span class="maintenance-badge hidden">MAINTENANCE</span>
           </div>
           <button class="more-button" type="button" aria-label="Показать действия">•••</button>
