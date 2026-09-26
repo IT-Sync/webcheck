@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "bot"))
 
 from callback_data import (
     admin_delete_callback,
+    site_ack_callback,
     site_check_now_callback,
     site_delete_callback,
     site_history_callback,
@@ -72,9 +73,10 @@ class CallbackDataTest(unittest.TestCase):
             site_check_now_callback(123),
             site_pause_1h_callback(123),
             site_history_callback(123),
+            site_ack_callback(123),
         ]
 
-        self.assertEqual(callbacks, ["chk:123", "p1h:123", "hist:123"])
+        self.assertEqual(callbacks, ["chk:123", "p1h:123", "hist:123", "ack:123"])
         for callback in callbacks:
             self.assertLessEqual(len(callback.encode()), 64)
 

@@ -9,6 +9,7 @@ from aiogram.exceptions import TelegramForbiddenError
 
 from bot.admin_console.layout import esc, page
 from bot.agent_server.registry import AGENT_REGISTRY
+from bot.public_status.server import setup_public_status_routes
 from bot.webapp.server import WEB_APP_ENABLED, setup_webapp_routes
 from bot.infra.db import (
     admin_delete_site_by_id,
@@ -879,6 +880,7 @@ def create_app(bot) -> web.Application:
     app.router.add_post("/admin/sites/{site_id:\\d+}/delete", delete_site)
     app.router.add_post("/admin/sites/{site_id:\\d+}/pause", pause_site)
     app.router.add_post("/admin/sites/{site_id:\\d+}/resume", resume_site)
+    setup_public_status_routes(app)
     setup_webapp_routes(app)
     return app
 

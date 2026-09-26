@@ -7,9 +7,9 @@
   <meta name="theme-color" content="#07110f">
   <meta name="robots" content="noindex, nofollow">
   <title>Webcheck</title>
-  <link rel="stylesheet" href="/app/static/app.css?v=12">
+  <link rel="stylesheet" href="/app/static/app.css?v=13">
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <script src="/app/static/app.js?v=12" defer></script>
+  <script src="/app/static/app.js?v=13" defer></script>
 </head>
 <body>
   <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -117,6 +117,7 @@
           <h2>Ваши ресурсы</h2>
         </div>
         <div class="section-actions">
+          <button class="team-button" id="open-operations" type="button">⌁ Массово / Публикация</button>
           <button class="team-button" id="open-team" type="button">◈ Проекты и участники</button>
           <button class="add-button" id="open-add" type="button"><span>+</span> Добавить</button>
         </div>
@@ -240,6 +241,47 @@
     </section>
   </dialog>
 
+  <dialog id="operations-dialog" class="operations-dialog">
+    <section class="dialog-card">
+      <button class="dialog-close" id="close-operations" aria-label="Закрыть" type="button">×</button>
+      <p class="eyebrow">OPERATIONS / POLICY / PUBLICATION</p><h2>Управление сигналами</h2>
+      <div class="ops-tabs" role="tablist"><button type="button" data-ops-tab="bulk" class="active">Пакетно</button><button type="button" data-ops-tab="notify">Алерты</button><button type="button" data-ops-tab="public">Статус</button></div>
+      <section class="ops-panel" data-ops-panel="bulk">
+        <h3>Добавить список</h3><p class="dialog-copy">Один адрес на строку. Ошибки не отменяют успешно добавленные ресурсы.</p>
+        <label for="bulk-project">Проект</label><div class="plain-field"><select id="bulk-project"></select></div>
+        <label for="bulk-urls">Адреса <small>до 50</small></label><textarea id="bulk-urls" rows="5" placeholder="api.example.com&#10;status.example.com"></textarea>
+        <label for="bulk-group">Группа <small>необязательно</small></label><div class="plain-field"><input id="bulk-group" maxlength="40"></div>
+        <button class="submit-button" id="bulk-add" type="button">Добавить список</button>
+        <h3>Выбранные ресурсы</h3><p class="dialog-copy"><b id="bulk-selected-count">0</b> выбрано карточками в списке.</p>
+        <div class="bulk-actions"><button type="button" data-bulk-action="pause">Пауза</button><button type="button" data-bulk-action="resume">Возобновить</button><button type="button" data-bulk-action="group">Назначить группу</button></div>
+        <div class="ops-results" id="bulk-results"></div>
+      </section>
+      <form class="ops-panel hidden" data-ops-panel="notify" id="notification-form">
+        <h3>Алерты владельца</h3><p class="dialog-copy">Эти значения применяются ко всем ресурсам без собственного переопределения.</p>
+        <label for="notification-site">Область правил</label><div class="plain-field"><select id="notification-site"><option value="">Все ресурсы по умолчанию</option></select></div>
+        <div class="policy-grid"><label><input type="checkbox" id="notify-down"> Недоступность</label><label><input type="checkbox" id="notify-recovery"> Восстановление</label><label><input type="checkbox" id="notify-ssl"> SSL</label><label><input type="checkbox" id="notify-domain"> Домен</label></div>
+        <label for="notify-repeat">Повтор при сбое, минут <small>0 — не повторять</small></label><div class="plain-field"><input id="notify-repeat" type="number" min="0" max="10080"></div>
+        <label for="notify-prolonged">Алерт о долгом сбое, минут <small>0 — выключен</small></label><div class="plain-field"><input id="notify-prolonged" type="number" min="0" max="10080"></div>
+        <button class="submit-button" type="submit">Сохранить правила</button>
+        <button class="secondary-button hidden" id="clear-notification-override" type="button">Вернуть правила владельца</button>
+      </form>
+      <form class="ops-panel hidden" data-ops-panel="public" id="status-page-form">
+        <h3>Публичная страница</h3><p class="dialog-copy">Публикуются только отмеченные сервисы, их общий статус и написанные вами обновления.</p>
+        <label for="status-project">Проект владельца</label><div class="plain-field"><select id="status-project"></select></div>
+        <label for="status-name">Название</label><div class="plain-field"><input id="status-name" maxlength="80" required></div>
+        <label for="status-slug">Публичный адрес</label><div class="plain-field slug-field"><span>/status/</span><input id="status-slug" pattern="[a-z0-9][a-z0-9-]{2,62}" required></div>
+        <label for="status-description">Описание</label><textarea id="status-description" rows="3" maxlength="500"></textarea>
+        <div id="status-service-list" class="status-service-list"></div>
+        <label class="publish-switch"><input type="checkbox" id="status-published"> <span>Опубликовать страницу намеренно</span></label>
+        <button class="submit-button" type="submit">Сохранить страницу</button>
+        <label for="status-update">Обновление инцидента</label><textarea id="status-update" rows="3" maxlength="2000" placeholder="Мы исследуем повышенное время ответа…"></textarea>
+        <button class="secondary-button" id="publish-update" type="button">Опубликовать обновление</button>
+        <a id="status-link" class="status-link hidden" target="_blank" rel="noopener">Открыть публичную страницу ↗</a>
+      </form>
+      <p class="form-error hidden" id="operations-error"></p>
+    </section>
+  </dialog>
+
   <dialog id="maintenance-dialog" class="maintenance-dialog">
     <form class="dialog-card" id="maintenance-form">
       <button class="dialog-close" id="close-maintenance" aria-label="Закрыть" type="button">×</button>
@@ -293,6 +335,7 @@
   <template id="site-template">
     <article class="site-card">
       <div class="status-rail"></div>
+      <label class="bulk-check" title="Выбрать для пакетной операции"><input type="checkbox" aria-label="Выбрать ресурс"><span></span></label>
       <div class="site-main">
         <div class="site-title-row">
           <div>

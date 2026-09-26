@@ -1683,6 +1683,249 @@ def export_user_logs_csv():
             writer.writerow([ts, user_id, username or "", action])
     return path
 
+
+NOTIFICATION_DEFAULTS = {
+    "notify_down": True,
+    "notify_recovery": True,
+    "notify_ssl": True,
+    "notify_domain": True,
+    "repeat_minutes": 0,
+    "prolonged_minutes": 0,
+}
+
+
+def get_notification_preferences(user_id, site_id=None):
+    """Return the effective owner preferences, preferring a site override."""
+    if site_id is not None:
+        c.execute("""
+            SELECT notify_down, notify_recovery, notify_ssl, notify_domain,
+                   repeat_minutes, prolonged_minutes
+            FROM notification_preferences
+            WHERE user_id = %s AND site_id = %s
+        """, (user_id, site_id))
+        row = c.fetchone()
+        if row:
+            return dict(zip(NOTIFICATION_DEFAULTS, row), scope="site")
+    c.execute("""
+        SELECT notify_down, notify_recovery, notify_ssl, notify_domain,
+               repeat_minutes, prolonged_minutes
+        FROM notification_preferences
+        WHERE user_id = %s AND site_id IS NULL
+    """, (user_id,))
+    row = c.fetchone()
+    if row:
+        return dict(zip(NOTIFICATION_DEFAULTS, row), scope="user")
+    return dict(NOTIFICATION_DEFAULTS, scope="default")
+
+
+def set_notification_preferences(user_id, preferences, site_id=None):
+    values = {key: preferences.get(key, default)
+              for key, default in NOTIFICATION_DEFAULTS.items()}
+    for key in ("notify_down", "notify_recovery", "notify_ssl", "notify_domain"):
+        if not isinstance(values[key], bool):
+            raise ValueError("invalid_notification_boolean")
+    for key in ("repeat_minutes", "prolonged_minutes"):
+        if isinstance(values[key], bool) or not isinstance(values[key], int) or not 0 <= values[key] <= 10080:
+            raise ValueError("invalid_notification_interval")
+    if site_id is not None and get_site_role(site_id, user_id) != "owner":
+        return False
+    try:
+        if site_id is None:
+            c.execute("""
+                INSERT INTO notification_preferences (
+                    user_id, site_id, notify_down, notify_recovery, notify_ssl,
+                    notify_domain, repeat_minutes, prolonged_minutes, updated_at
+                ) VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) WHERE site_id IS NULL DO UPDATE SET
+                    notify_down = EXCLUDED.notify_down,
+                    notify_recovery = EXCLUDED.notify_recovery,
+                    notify_ssl = EXCLUDED.notify_ssl,
+                    notify_domain = EXCLUDED.notify_domain,
+                    repeat_minutes = EXCLUDED.repeat_minutes,
+                    prolonged_minutes = EXCLUDED.prolonged_minutes,
+                    updated_at = EXCLUDED.updated_at
+            """, (user_id, values["notify_down"], values["notify_recovery"],
+                  values["notify_ssl"], values["notify_domain"],
+                  values["repeat_minutes"], values["prolonged_minutes"],
+                  datetime.utcnow()))
+        else:
+            c.execute("""
+                INSERT INTO notification_preferences (
+                    user_id, site_id, notify_down, notify_recovery, notify_ssl,
+                    notify_domain, repeat_minutes, prolonged_minutes, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_id, site_id) WHERE site_id IS NOT NULL DO UPDATE SET
+                    notify_down = EXCLUDED.notify_down,
+                    notify_recovery = EXCLUDED.notify_recovery,
+                    notify_ssl = EXCLUDED.notify_ssl,
+                    notify_domain = EXCLUDED.notify_domain,
+                    repeat_minutes = EXCLUDED.repeat_minutes,
+                    prolonged_minutes = EXCLUDED.prolonged_minutes,
+                    updated_at = EXCLUDED.updated_at
+            """, (user_id, site_id, values["notify_down"], values["notify_recovery"],
+                  values["notify_ssl"], values["notify_domain"],
+                  values["repeat_minutes"], values["prolonged_minutes"],
+                  datetime.utcnow()))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def clear_site_notification_preferences(user_id, site_id):
+    if get_site_role(site_id, user_id) != "owner":
+        return False
+    c.execute("DELETE FROM notification_preferences WHERE user_id = %s AND site_id = %s",
+              (user_id, site_id))
+    changed = c.rowcount > 0
+    conn.commit()
+    return changed
+
+
+def get_active_incident_state(site_id):
+    c.execute("""
+        SELECT started_at, acknowledged_by, acknowledged_at,
+               last_reminder_at, prolonged_notified_at
+        FROM central_incidents WHERE site_id = %s AND ended_at IS NULL
+    """, (site_id,))
+    row = c.fetchone()
+    if not row:
+        return None
+    return dict(started_at=row[0], acknowledged_by=row[1], acknowledged_at=row[2],
+                last_reminder_at=row[3], prolonged_notified_at=row[4])
+
+
+def acknowledge_site_incident(site_id, user_id):
+    if get_site_role(site_id, user_id) not in ("owner", "manager"):
+        return False
+    c.execute("""
+        UPDATE central_incidents SET acknowledged_by = %s,
+               acknowledged_at = %s, updated_at = %s
+        WHERE site_id = %s AND ended_at IS NULL AND acknowledged_at IS NULL
+    """, (user_id, datetime.utcnow(), datetime.utcnow(), site_id))
+    changed = c.rowcount > 0
+    conn.commit()
+    return changed
+
+
+def mark_incident_reminder(site_id, *, prolonged=False, notified_at=None):
+    column = "prolonged_notified_at" if prolonged else "last_reminder_at"
+    c.execute(f"UPDATE central_incidents SET {column} = %s, updated_at = %s WHERE site_id = %s AND ended_at IS NULL",
+              (notified_at or datetime.utcnow(), datetime.utcnow(), site_id))
+    conn.commit()
+
+
+def get_status_page_for_project(project_id, owner_user_id):
+    c.execute("""
+        SELECT page.id, page.project_id, page.slug, page.name, page.description,
+               page.is_published, COALESCE(sites.items, ARRAY[]::json[])
+        FROM status_pages AS page
+        LEFT JOIN LATERAL (
+            SELECT ARRAY_AGG(json_build_object('site_id', item.site_id,
+                             'display_name', item.display_name) ORDER BY item.position)
+                   AS items
+            FROM status_page_sites AS item WHERE item.status_page_id = page.id
+        ) AS sites ON TRUE
+        WHERE page.project_id = %s AND page.owner_user_id = %s
+    """, (project_id, owner_user_id))
+    row = c.fetchone()
+    return None if not row else dict(id=row[0], project_id=row[1], slug=row[2],
+        name=row[3], description=row[4], is_published=row[5], sites=list(row[6] or []))
+
+
+def upsert_status_page(project_id, owner_user_id, slug, name, description,
+                       is_published, sites):
+    try:
+        c.execute("SELECT owner_user_id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+        project = c.fetchone()
+        if not project or project[0] != owner_user_id:
+            conn.rollback()
+            return None
+        site_ids = [item[0] for item in sites]
+        if site_ids:
+            c.execute("SELECT id FROM sites WHERE project_id = %s AND id = ANY(%s)",
+                      (project_id, site_ids))
+            if {row[0] for row in c.fetchall()} != set(site_ids):
+                conn.rollback()
+                return None
+        c.execute("""
+            INSERT INTO status_pages (project_id, owner_user_id, slug, name,
+                                      description, is_published, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (project_id) DO UPDATE SET slug = EXCLUDED.slug,
+                name = EXCLUDED.name, description = EXCLUDED.description,
+                is_published = EXCLUDED.is_published, updated_at = EXCLUDED.updated_at
+            RETURNING id
+        """, (project_id, owner_user_id, slug, name, description,
+              is_published, datetime.utcnow()))
+        page_id = c.fetchone()[0]
+        c.execute("DELETE FROM status_page_sites WHERE status_page_id = %s", (page_id,))
+        for position, (site_id, display_name) in enumerate(sites):
+            c.execute("""
+                INSERT INTO status_page_sites (status_page_id, site_id, display_name, position)
+                VALUES (%s, %s, %s, %s)
+            """, (page_id, site_id, display_name, position))
+        conn.commit()
+        return page_id
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def add_status_page_update(project_id, owner_user_id, message):
+    c.execute("""
+        INSERT INTO status_page_updates (status_page_id, message, created_by)
+        SELECT id, %s, %s FROM status_pages
+        WHERE project_id = %s AND owner_user_id = %s RETURNING id
+    """, (message, owner_user_id, project_id, owner_user_id))
+    row = c.fetchone()
+    conn.commit()
+    return row[0] if row else None
+
+
+def get_public_status_page(slug):
+    c.execute("""
+        SELECT page.name, page.description, page.updated_at,
+               item.display_name, site.last_status, site.last_checked,
+               COALESCE(site.is_paused, FALSE),
+               EXISTS (SELECT 1 FROM maintenance_windows mw
+                       WHERE mw.site_id = site.id AND mw.cancelled_at IS NULL
+                         AND mw.starts_at <= %s AND mw.ends_at > %s)
+        FROM status_pages page
+        JOIN status_page_sites item ON item.status_page_id = page.id
+        JOIN sites site ON site.id = item.site_id
+        WHERE page.slug = %s AND page.is_published
+        ORDER BY item.position, item.site_id
+    """, (datetime.utcnow(), datetime.utcnow(), slug))
+    rows = c.fetchall()
+    if not rows:
+        return None
+    c.execute("""
+        SELECT entry.message, entry.created_at
+        FROM status_page_updates AS entry
+        JOIN status_pages page ON page.id = entry.status_page_id
+        WHERE page.slug = %s ORDER BY entry.created_at DESC LIMIT 20
+    """, (slug,))
+    updates = [dict(message=row[0], created_at=row[1]) for row in c.fetchall()]
+    services = []
+    for row in rows:
+        paused, maintenance = bool(row[6]), bool(row[7])
+        if maintenance:
+            status = "maintenance"
+        elif paused:
+            status = "paused"
+        elif row[4] and "HTTP: OK" in row[4]:
+            status = "operational"
+        elif row[4] and "HTTP: DOWN" in row[4]:
+            status = "outage"
+        else:
+            status = "degraded"
+        services.append(dict(name=row[3], status=status, last_checked=row[5]))
+    return dict(name=rows[0][0], description=rows[0][1], updated_at=rows[0][2],
+                services=services, updates=updates)
+
+
 def export_sites_csv():
     path = "/tmp/sites.csv"
     c.execute("SELECT user_id, username, url, last_status FROM sites")
@@ -2060,5 +2303,12 @@ def migrate_add_notification_flags():
     c.execute("ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS media_group_id TEXT")
     c.execute("CREATE INDEX IF NOT EXISTS idx_feedback_conversations_last_message ON feedback_conversations(last_message_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_feedback_messages_conversation_created ON feedback_messages(conversation_id, created_at)")
+    c.execute("ALTER TABLE central_incidents ADD COLUMN IF NOT EXISTS acknowledged_by BIGINT")
+    c.execute("ALTER TABLE central_incidents ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP")
+    c.execute("ALTER TABLE central_incidents ADD COLUMN IF NOT EXISTS last_reminder_at TIMESTAMP")
+    c.execute("ALTER TABLE central_incidents ADD COLUMN IF NOT EXISTS prolonged_notified_at TIMESTAMP")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_preferences_user_default ON notification_preferences(user_id) WHERE site_id IS NULL")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_preferences_user_site ON notification_preferences(user_id, site_id) WHERE site_id IS NOT NULL")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_status_page_updates_page_created ON status_page_updates(status_page_id, created_at DESC)")
 
     conn.commit()

@@ -1,6 +1,6 @@
 # TODO
 
-Last updated: 2026-09-24
+Last updated: 2026-09-26
 
 This file tracks unresolved work and technical debt. Completed work should be
 removed or moved into the current-state sections of `PROJECT_MEMORY.md`; it
@@ -48,9 +48,10 @@ groups, multiple tags, combined search/filtering, structured maintenance windows
 the searchable all-customer site registry, sortable administrative tables, and
 the feedback inbox with media support and bot replies are implemented. The
 current history includes availability, average and peak latency, a per-agent
-regional breakdown, and durable central incident intervals. Incident alerts
-create an auto-expiring one-hour maintenance window. Suggested next delivery
-order is regional classification, then public status pages.
+regional breakdown, durable central incident intervals, acknowledgement,
+configurable notification policies, bounded bulk operations, and deliberately
+published status pages. Incident alerts create an auto-expiring one-hour
+maintenance window. Suggested next delivery order is regional classification.
 
 ### High Priority
 
@@ -66,22 +67,9 @@ order is regional classification, then public status pages.
   threshold is reached; allow them to gate global outage alerts while retaining
   separately configurable regional alerts and defined unavailable-agent
   behavior.
-- [ ] Incident acknowledgement: add a "Take ownership" action, track the
-  responder and acknowledgement time, and coordinate incident handling with
-  notification reminders and future team permissions.
 
 ### Medium Priority
 
-- [ ] Make the existing global notification rules configurable per user or
-  resource: select event types, configure repeat reminders, and notify about
-  prolonged outages. Apply acknowledgement and maintenance rules consistently
-  to avoid duplicate or unwanted notifications.
-- [ ] Bulk operations: add resources from a list, assign groups, and pause or
-  resume selected sites. Preserve ownership checks, limits, validation, and
-  per-resource feedback for partial failures.
-- [ ] Public status pages: publish an explicitly selected subset of services
-  with current availability and operator-written incident updates. Require
-  deliberate publication and keep private monitoring details out of public views.
 - [ ] Content and API checks: validate expected HTTP status codes, required page
   text, or JSON values. Preserve public-target validation for new check paths.
 - [ ] Build DNS change monitoring on the existing last-successful resolved-IP

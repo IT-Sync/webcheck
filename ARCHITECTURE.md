@@ -42,6 +42,9 @@ published on a private address reachable from Nginx and protected by a firewall.
   and registration entry points.
 - `bot/webapp/` owns Telegram `initData` validation, public-target validation,
   Mini App API routes, and static assets.
+- `bot/public_status/` renders deliberately published, unauthenticated status
+  pages from a privacy-limited repository projection. It does not reuse the
+  authenticated Mini App payload.
 - `bot/admin_console/` owns the administrative UI and hosts the shared aiohttp
   application used by `/admin/`, `/app/`, and `/api/webapp/`. Its shared page
   shell, navigation, styling, and client-side table behavior live in
@@ -117,6 +120,24 @@ denominator. Agent results from an explicit manual check remain observed samples
 and are included. `maintenance_windows` records start/end times, reasons,
 cancellation, and completed intervals separately from incidents.
 
+Notification policy resolution checks an owner/resource override first, then
+the owner's default, then safe compatibility defaults. Scheduler state and
+incident state remain separate: delivery flags deduplicate initial alerts,
+while active incidents retain acknowledgement, repeat, and prolonged-alert
+timestamps. An acknowledgement suppresses only repeat/prolonged reminders;
+recovery still closes the incident. Active maintenance windows exclude the site
+before policy evaluation.
+
+Bulk API operations retain the same project roles, site limits, target
+validation, and mutation functions as single-resource actions. Requests are
+bounded to 50 additions or 100 selected-resource mutations, and every item gets
+an independent result so processing continues after a local failure.
+
+Status-page management is owner-only. A page is a private draft unless the
+owner explicitly sends `is_published: true` with at least one verified in-project
+site. The public repository query joins only the selected rows and projects them
+to display name, coarse state, last-check time, page copy, and operator updates.
+
 Before inserting a site, the server normalizes the URL, resolves its hostname
 with a bounded timeout, and rejects any non-global address. A full monitoring
 check is deliberately not part of insertion. DNS and TLS socket work runs in
@@ -155,6 +176,13 @@ response through the same bot before recording it as an administrator message.
 | `11003` | `/api/webapp/sites/{id}/history` | Telegram `initData` + ownership | Resource history and aggregates |
 | `11003` | `/api/webapp/sites/{id}/tags` | Telegram `initData` + ownership | Replace resource tags |
 | `11003` | `/api/webapp/sites/{id}/maintenance/*` | Telegram `initData` + ownership | Schedule, list, or cancel maintenance |
+| `11003` | `/api/webapp/notifications` | Telegram `initData` | Read/update owner notification defaults |
+| `11003` | `/api/webapp/sites/bulk` | Telegram `initData` + manager/owner | Bounded add/group/pause/resume operations |
+| `11003` | `/api/webapp/sites/{id}/notifications` | Telegram `initData` + owner | Manage a resource notification override |
+| `11003` | `/api/webapp/sites/{id}/acknowledge` | Telegram `initData` + manager/owner | Acknowledge an active incident |
+| `11003` | `/api/webapp/projects/{id}/status-page` | Telegram `initData` + project owner | Manage draft/public page and selected subset |
+| `11003` | `/api/webapp/projects/{id}/status-page/updates` | Telegram `initData` + project owner | Publish an operator update |
+| `11003` | `/status/{slug}` | Published-page lookup | Privacy-limited public availability page |
 | `11003` | `/api/webapp/feedback/start` | Telegram `initData` | Start a persisted bot feedback session |
 | `11003` | `/admin/*` | Admin token cookie/query | Operator console |
 | `11003` | `/admin/sites` | Admin token cookie/query | Searchable cross-user resource registry |
@@ -262,6 +290,18 @@ as compatibility state for existing scheduler and notification behavior.
 intervals. Overlapping non-cancelled windows for one resource are rejected by the
 repository transaction. Weekly reports include windows overlapping the previous
 seven days and distinguish currently active maintenance from manual pauses.
+
+`notification_preferences` stores one partial-indexed default row per user and
+optional owner-controlled site rows. `central_incidents` stores the responder
+and acknowledgement time plus successful repeat/prolonged delivery timestamps;
+these fields reset naturally because each recovery closes the row and a future
+outage creates a new incident.
+
+`status_pages` stores one draft or published page per project,
+`status_page_sites` stores the explicitly selected subset and public display
+names, and `status_page_updates` stores owner-written updates. Replacing the
+subset locks/verifies the project and validates every site before deleting the
+old mapping, within one transaction.
 
 The central application uses a bounded `ThreadedConnectionPool`. Legacy
 `bot.infra.db` functions and signatures are preserved by compatibility

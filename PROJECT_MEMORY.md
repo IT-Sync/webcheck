@@ -1,6 +1,6 @@
 # Project Memory
 
-Last updated: 2026-09-24
+Last updated: 2026-09-26
 
 ## Current State
 
@@ -33,10 +33,17 @@ Current behavior:
   and tag filtering, and problem-first, name, or recent sorting;
 - supports optional resource groups, up to eight tags per resource, and
   selectable one-day, seven-day, and 30-day history views; the authenticated
-  API accepts periods from one to 90
-  days, uses hourly buckets through seven days and daily buckets after that,
-  and combines raw, hourly, and daily agent aggregates with monitoring events
-  and durable central incidents;
+  API accepts periods from one to 90 days, uses hourly buckets through seven
+  days and daily buckets after that, and combines raw, hourly, and daily agent
+  aggregates with monitoring events and durable central incidents;
+- provides a consolidated operations dialog for bounded bulk addition, group
+  assignment, and pause/resume actions, returning per-resource results so
+  partial failures remain visible;
+- lets owners configure default notification event types and reminder timing;
+  authenticated per-resource overrides are also available through the API;
+- lets project owners save private status-page drafts, explicitly choose the
+  published service subset, write incident updates, and deliberately publish or
+  unpublish the page;
 - shows availability, average and peak latency, and availability grouped by
   remote agent and region;
 - renders session-cached site data immediately and refreshes it from the server;
@@ -63,6 +70,19 @@ widths. A viewer sees statuses and history; a manager may manage project sites
 and maintenance; only the owner changes membership.
 Monitoring alerts and scheduled reports still go to the site owner. Removing a
 user with a shared owned project is refused rather than deleting team resources.
+
+Notification defaults preserve prior behavior: DOWN, recovery, SSL, and domain
+events are enabled, while repeat and prolonged-outage reminders are disabled.
+Owners may override all six values per resource. Acknowledgement is available
+from the Telegram incident keyboard and authenticated Mini App API; the active
+incident records the responder/time and suppresses repeat/prolonged reminders.
+Recovery closes and resets the incident regardless of notification selection.
+Maintenance remains authoritative because active windows exclude a resource
+from scheduled checks and therefore from alert/reminder evaluation.
+
+Public status pages are unauthenticated only after an owner explicitly publishes
+one. They expose selected display names, coarse state, last-check timestamps,
+and operator updates, while omitting URLs and private monitoring details.
 
 ## Monitoring and Incident Controls
 
@@ -120,6 +140,11 @@ database calls made directly from async handlers can still block the event loop.
 
 Disposable PostgreSQL integration tests cover commit, rollback, and concurrent
 pool use when `TEST_DATABASE_URL` is set.
+
+`notification_preferences`, `status_pages`, `status_page_sites`, and
+`status_page_updates` are additive tables. Active central incidents also retain
+acknowledgement and reminder delivery timestamps. The status-page subset is
+transactionally replaced only after every selected site is verified in-project.
 
 ## Data Retention
 
@@ -182,18 +207,16 @@ migrations. Back up PostgreSQL before major releases.
 
 ## Planned Development
 
-The product backlog in `TODO.md` covers automatic global-versus-regional
+The product backlog in `TODO.md` now centers on automatic global-versus-regional
 classification, monitoring-health alerts, multi-agent incident confirmation,
-acknowledgement, notification preferences, bulk operations, public status pages,
-content/API checks, DNS changes, and team access. Some foundations exist as
-documented above, but these extensions are not yet implemented. The proposed
-next sequence is regional classification and public status pages.
+content/API checks, and DNS changes. The proposed next sequence begins with
+regional classification.
 
 ## Validation Baseline
 
-The current suite contains 63 `unittest` tests. The standard run passes 58 and
-skips five PostgreSQL integration tests unless `TEST_DATABASE_URL` points to a
-disposable database; all 63 pass when that database is provided.
+The current suite contains 73 `unittest` tests. The standard run passes 67 and
+skips six PostgreSQL integration tests unless `TEST_DATABASE_URL` points to a
+disposable database.
 
 ```bash
 python -m unittest discover -s tests -v

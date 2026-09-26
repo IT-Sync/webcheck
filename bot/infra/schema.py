@@ -125,6 +125,10 @@ def ensure_base_schema(cursor, connection):
         end_http_status INTEGER,
         end_latency_ms INTEGER,
         end_resolved_ip TEXT,
+        acknowledged_by BIGINT,
+        acknowledged_at TIMESTAMP,
+        last_reminder_at TIMESTAMP,
+        prolonged_notified_at TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )''')
@@ -144,6 +148,43 @@ def ensure_base_schema(cursor, connection):
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         cancelled_at TIMESTAMP,
         CHECK (ends_at > starts_at)
+    )''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS notification_preferences (
+        id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL,
+        site_id INTEGER REFERENCES sites(id) ON DELETE CASCADE,
+        notify_down BOOLEAN NOT NULL DEFAULT TRUE,
+        notify_recovery BOOLEAN NOT NULL DEFAULT TRUE,
+        notify_ssl BOOLEAN NOT NULL DEFAULT TRUE,
+        notify_domain BOOLEAN NOT NULL DEFAULT TRUE,
+        repeat_minutes INTEGER NOT NULL DEFAULT 0 CHECK (repeat_minutes BETWEEN 0 AND 10080),
+        prolonged_minutes INTEGER NOT NULL DEFAULT 0 CHECK (prolonged_minutes BETWEEN 0 AND 10080),
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS status_pages (
+        id BIGSERIAL PRIMARY KEY,
+        project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        owner_user_id BIGINT NOT NULL, slug TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+        is_published BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (project_id)
+    )''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS status_page_sites (
+        status_page_id BIGINT NOT NULL REFERENCES status_pages(id) ON DELETE CASCADE,
+        site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+        display_name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (status_page_id, site_id)
+    )''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS status_page_updates (
+        id BIGSERIAL PRIMARY KEY,
+        status_page_id BIGINT NOT NULL REFERENCES status_pages(id) ON DELETE CASCADE,
+        message TEXT NOT NULL, created_by BIGINT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )''')
 
     cursor.execute('''CREATE TABLE IF NOT EXISTS feedback_conversations (

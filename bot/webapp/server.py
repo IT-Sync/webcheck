@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
@@ -11,6 +12,9 @@ from bot.checks.service import check_resource
 from bot.core.status_formatter import append_agent_results, format_status_text
 from bot.infra.db import (
     add_site, add_site_to_project, cancel_maintenance_window,
+    acknowledge_site_incident, add_status_page_update,
+    clear_site_notification_preferences,
+    get_notification_preferences, get_status_page_for_project,
     create_maintenance_window, create_project, create_project_invite,
     get_project_invites, revoke_project_invite, ensure_personal_project,
     delete_site_by_id,
@@ -26,6 +30,7 @@ from bot.infra.db import (
     set_site_paused_by_id,
     set_site_group_by_id, set_site_tags_by_id,
     change_project_member_role, remove_project_member,
+    set_notification_preferences, upsert_status_page,
     update_site_status_by_id,
 )
 from bot.webapp.auth import TelegramAuthError, validate_init_data
@@ -407,6 +412,222 @@ async def create_site(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "site": site}, status=201)
 
 
+@require_telegram_user
+async def bulk_sites(request: web.Request) -> web.Response:
+    """Run bounded bulk mutations and report each item independently."""
+    user = request["telegram_user"]
+    try:
+        data = await request.json()
+        action = data["action"]
+    except Exception:
+        return _json_error("Некорректная пакетная операция", code="invalid_bulk")
+    if action == "add":
+        urls = data.get("urls")
+        if not isinstance(urls, list) or not 1 <= len(urls) <= 50:
+            return _json_error("Передайте от 1 до 50 адресов", code="invalid_bulk")
+        try:
+            project_id = int(data.get("project_id") or ensure_personal_project(user.id))
+            site_group = _clean_group(data.get("site_group", ""))
+            tags = _clean_tags(data.get("tags", []))
+        except (TypeError, ValueError) as exc:
+            return _json_error(str(exc) or "Некорректные параметры", code="invalid_bulk")
+        if get_project_role(project_id, user.id) not in ("owner", "manager"):
+            return _json_error("Нет права изменять проект", status=403, code="forbidden")
+        results = []
+        for raw_url in urls:
+            label = raw_url if isinstance(raw_url, str) else str(raw_url)
+            if not isinstance(raw_url, str):
+                results.append({"item": label, "ok": False, "code": "invalid_target",
+                                "message": "Адрес должен быть строкой"})
+                continue
+            if get_project_site_count(project_id) >= WEB_APP_MAX_SITES_PER_USER:
+                results.append({"item": label, "ok": False, "code": "site_limit",
+                                "message": "Достигнут лимит проекта"})
+                continue
+            try:
+                url = await validate_monitoring_target(
+                    raw_url, dns_timeout_seconds=WEB_APP_DNS_TIMEOUT_SECONDS)
+                if get_site_by_url_in_project(project_id, url):
+                    raise ValueError("Этот сайт уже добавлен")
+                site_id = add_site_to_project(user.id, project_id, url,
+                                              user.username, site_group)
+                if site_id is None:
+                    raise PermissionError()
+                try:
+                    set_site_tags_by_id(site_id, user.id, tags)
+                except Exception as exc:
+                    results.append({"item": label, "ok": True, "site_id": site_id,
+                                    "code": "metadata_failed",
+                                    "message": f"Добавлен, но теги не сохранены: {type(exc).__name__}"})
+                    continue
+                results.append({"item": label, "ok": True, "site_id": site_id})
+            except TargetValidationError as exc:
+                results.append({"item": label, "ok": False,
+                                "code": "invalid_target", "message": str(exc)})
+            except ValueError as exc:
+                results.append({"item": label, "ok": False,
+                                "code": "duplicate", "message": str(exc)})
+            except PermissionError:
+                results.append({"item": label, "ok": False,
+                                "code": "forbidden", "message": "Нет права изменять проект"})
+            except Exception as exc:
+                results.append({"item": label, "ok": False, "code": "failed",
+                                "message": f"Не удалось добавить: {type(exc).__name__}"})
+        log_user_action(user.id, f"Mini App: bulk add {sum(item['ok'] for item in results)}/{len(results)} sites", user.username)
+        return web.json_response({"ok": True, "results": results})
+
+    site_ids = data.get("site_ids")
+    if not isinstance(site_ids, list) or not 1 <= len(site_ids) <= 100:
+        return _json_error("Выберите от 1 до 100 ресурсов", code="invalid_bulk")
+    if action not in ("pause", "resume", "group"):
+        return _json_error("Неизвестная пакетная операция", code="invalid_bulk")
+    try:
+        site_group = _clean_group(data.get("site_group", "")) if action == "group" else None
+    except ValueError as exc:
+        return _json_error(str(exc), code="invalid_metadata")
+    results = []
+    for raw_site_id in site_ids:
+        try:
+            site_id = int(raw_site_id)
+        except (TypeError, ValueError):
+            results.append({"item": raw_site_id, "ok": False, "code": "invalid_id",
+                            "message": "Некорректный идентификатор"})
+            continue
+        site = get_site_for_user(site_id, user.id)
+        if not site or get_site_role(site_id, user.id) not in ("owner", "manager"):
+            results.append({"item": site_id, "ok": False, "code": "forbidden",
+                            "message": "Ресурс не найден или недоступен"})
+            continue
+        try:
+            changed = (set_site_group_by_id(site_id, user.id, site_group)
+                       if action == "group" else
+                       set_site_paused_by_id(site_id, user.id, action == "pause"))
+        except Exception as exc:
+            results.append({"item": site_id, "ok": False, "code": "failed",
+                            "message": f"Не удалось изменить: {type(exc).__name__}"})
+            continue
+        results.append({"item": site_id, "ok": bool(changed),
+                        "code": None if changed else "not_changed",
+                        "message": "Готово" if changed else "Изменение не применено"})
+    log_user_action(user.id, f"Mini App: bulk {action} {sum(item['ok'] for item in results)}/{len(results)} sites", user.username)
+    return web.json_response({"ok": True, "results": results})
+
+
+@require_telegram_user
+async def user_notification_preferences(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    if request.method == "GET":
+        return web.json_response({"ok": True, "preferences": get_notification_preferences(user.id)})
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise ValueError()
+        set_notification_preferences(user.id, data)
+    except (ValueError, TypeError):
+        return _json_error("Проверьте типы событий и интервалы", code="invalid_preferences")
+    return web.json_response({"ok": True, "preferences": get_notification_preferences(user.id)})
+
+
+@require_telegram_user
+async def site_notification_preferences(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    site = _owned_site(request)
+    if not site:
+        return _json_error("Сайт не найден", status=404, code="not_found")
+    if get_site_role(site[0], user.id) != "owner":
+        return _json_error("Настройки доступны владельцу", status=403, code="forbidden")
+    if request.method == "GET":
+        return web.json_response({"ok": True,
+            "preferences": get_notification_preferences(user.id, site[0])})
+    if request.method == "DELETE":
+        clear_site_notification_preferences(user.id, site[0])
+    else:
+        try:
+            data = await request.json()
+            set_notification_preferences(user.id, data, site[0])
+        except (ValueError, TypeError):
+            return _json_error("Проверьте типы событий и интервалы", code="invalid_preferences")
+    return web.json_response({"ok": True,
+        "preferences": get_notification_preferences(user.id, site[0])})
+
+
+@require_telegram_user
+async def acknowledge_incident(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    site = _owned_site(request)
+    if not site:
+        return _json_error("Сайт не найден", status=404, code="not_found")
+    if not acknowledge_site_incident(site[0], user.id):
+        return _json_error("Активный инцидент не найден", status=409, code="no_incident")
+    log_user_action(user.id, f"Mini App: acknowledged incident for {site[3]}", user.username)
+    return web.json_response({"ok": True})
+
+
+@require_telegram_user
+async def project_status_page(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    project_id = int(request.match_info["project_id"])
+    if get_project_role(project_id, user.id) != "owner":
+        return _json_error("Доступно только владельцу", status=403, code="forbidden")
+    if request.method == "GET":
+        return web.json_response({"ok": True,
+            "status_page": get_status_page_for_project(project_id, user.id)})
+    try:
+        data = await request.json()
+        slug = data["slug"].strip().lower()
+        name = " ".join(data["name"].strip().split())
+        description = data.get("description", "").strip()
+        published = data.get("is_published") is True
+        raw_sites = data.get("sites", [])
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,62}", slug):
+            raise ValueError("Адрес: 3–63 символа, латиница, цифры и дефисы")
+        if not name or len(name) > 80 or len(description) > 500:
+            raise ValueError("Проверьте название и описание")
+        if not isinstance(raw_sites, list) or len(raw_sites) > 100:
+            raise ValueError("Некорректный список сервисов")
+        selected = []
+        seen = set()
+        for item in raw_sites:
+            site_id = int(item["site_id"])
+            display_name = " ".join(item["display_name"].strip().split())
+            if site_id in seen or not display_name or len(display_name) > 80:
+                raise ValueError("Некорректное публичное имя сервиса")
+            selected.append((site_id, display_name)); seen.add(site_id)
+        if published and not selected:
+            raise ValueError("Перед публикацией выберите хотя бы один сервис")
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        return _json_error(str(exc) or "Некорректная страница статуса", code="invalid_status_page")
+    try:
+        page_id = upsert_status_page(project_id, user.id, slug, name,
+                                     description, published, selected)
+    except Exception as exc:
+        if "status_pages_slug_key" in str(exc):
+            return _json_error("Такой публичный адрес уже занят", status=409, code="duplicate_slug")
+        raise
+    if page_id is None:
+        return _json_error("Проект или сервис не найден", status=404, code="not_found")
+    return web.json_response({"ok": True, "status_page":
+        get_status_page_for_project(project_id, user.id)})
+
+
+@require_telegram_user
+async def create_status_update(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    project_id = int(request.match_info["project_id"])
+    if get_project_role(project_id, user.id) != "owner":
+        return _json_error("Доступно только владельцу", status=403, code="forbidden")
+    try:
+        data = await request.json(); message = data["message"].strip()
+        if not message or len(message) > 2000:
+            raise ValueError()
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return _json_error("Обновление должно содержать от 1 до 2000 символов", code="invalid_update")
+    update_id = add_status_page_update(project_id, user.id, message)
+    if update_id is None:
+        return _json_error("Сначала создайте страницу статуса", status=409, code="no_status_page")
+    return web.json_response({"ok": True, "update_id": update_id}, status=201)
+
+
 def _owned_site(request: web.Request):
     user = request["telegram_user"]
     try:
@@ -646,7 +867,17 @@ def setup_webapp_routes(app: web.Application) -> None:
     app.router.add_patch("/api/webapp/projects/{project_id:\d+}/members/{member_id:\d+}", update_existing_project_member)
     app.router.add_delete("/api/webapp/projects/{project_id:\d+}/members/{member_id:\d+}", delete_project_member)
     app.router.add_post("/api/webapp/feedback/start", start_feedback)
+    app.router.add_route("GET", "/api/webapp/notifications", user_notification_preferences)
+    app.router.add_route("PUT", "/api/webapp/notifications", user_notification_preferences)
+    app.router.add_get("/api/webapp/projects/{project_id:\\d+}/status-page", project_status_page)
+    app.router.add_put("/api/webapp/projects/{project_id:\\d+}/status-page", project_status_page)
+    app.router.add_post("/api/webapp/projects/{project_id:\\d+}/status-page/updates", create_status_update)
     app.router.add_post("/api/webapp/sites", create_site)
+    app.router.add_post("/api/webapp/sites/bulk", bulk_sites)
+    app.router.add_route("GET", "/api/webapp/sites/{site_id:\\d+}/notifications", site_notification_preferences)
+    app.router.add_route("PUT", "/api/webapp/sites/{site_id:\\d+}/notifications", site_notification_preferences)
+    app.router.add_route("DELETE", "/api/webapp/sites/{site_id:\\d+}/notifications", site_notification_preferences)
+    app.router.add_post("/api/webapp/sites/{site_id:\\d+}/acknowledge", acknowledge_incident)
     app.router.add_post("/api/webapp/sites/{site_id:\\d+}/check", check_site)
     app.router.add_post("/api/webapp/sites/{site_id:\\d+}/pause", pause_site)
     app.router.add_post("/api/webapp/sites/{site_id:\\d+}/resume", resume_site)

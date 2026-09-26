@@ -3,18 +3,23 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.infra.db import (
     get_all_site_checks, update_site_status_by_id, log_event,
     update_site_success, start_site_incident, clear_site_incident,
+    get_active_incident_state, get_notification_preferences,
+    mark_incident_reminder,
 )
 from bot.infra.db import get_site_flags_by_id, set_site_flags_by_id
 from bot.infra.maintenance import run_database_maintenance
 from bot.agent_server.checks import check_with_agents
 from bot.checks.monitor import check_domain_expiry, check_http_details
 from bot.checks.service import check_resource
+from bot.core.notification_policy import reminder_kind
 from bot.core.status_formatter import (
     append_agent_results,
     format_domain_expiry_alert, format_down_alert, format_recovery_alert,
     format_ssl_expiry_alert, format_status_text,
 )
-from bot.telegram.callback_data import site_check_now_callback, site_history_callback, site_pause_1h_callback
+from bot.telegram.callback_data import (
+    site_ack_callback, site_check_now_callback, site_history_callback, site_pause_1h_callback,
+)
 from bot.telegram.reporting import BOT_OWNER_ID, notify_block, send_weekly_reports
 from datetime import datetime
 from aiogram.exceptions import TelegramForbiddenError
@@ -89,6 +94,7 @@ async def confirm_http_down(url):
 
 def build_incident_keyboard(site_id):
     kb = InlineKeyboardBuilder()
+    kb.button(text="Принять инцидент", callback_data=site_ack_callback(site_id))
     kb.button(text="Проверить сейчас", callback_data=site_check_now_callback(site_id))
     kb.button(text="Пауза 1 час", callback_data=site_pause_1h_callback(site_id))
     kb.button(text="Открыть историю", callback_data=site_history_callback(site_id))
@@ -115,7 +121,9 @@ async def process_site(bot, site_row):
         ssl_days = result.ssl_days
 
         flags = get_site_flags_by_id(site_id)
+        preferences = get_notification_preferences(user_id, site_id)
         notified_http = flags.get("http", False)
+        last_http_ts = flags.get("http_ts")
         notified_ssl = flags.get("ssl", False)
         notified_domain = flags.get("domain", False)
         http_fail_count = flags.get("http_fail_count", 0)
@@ -153,9 +161,11 @@ async def process_site(bot, site_row):
 
         issues = []
         notification_flags = {}
+        incident_reminder = None
         confirmed_transient_http = False
 
-        if not http_ok and should_confirm_http_down(http_fail_count, notified_http):
+        if (not http_ok and preferences["notify_down"] and
+                should_confirm_http_down(http_fail_count, notified_http)):
             confirmed_http_details = await confirm_http_down(url)
             if confirmed_http_details.get("ok"):
                 http_details = confirmed_http_details
@@ -185,7 +195,8 @@ async def process_site(bot, site_row):
             )
             should_notify_http = (
                 new_fail_count >= HTTP_FAILURE_THRESHOLD and
-                not notified_http
+                not notified_http and
+                preferences["notify_down"]
             )
             if should_notify_http:
                 issues.append(format_down_alert(
@@ -202,22 +213,31 @@ async def process_site(bot, site_row):
                 notification_flags["http_ts"] = now
             else:
                 set_site_flags_by_id(site_id, http_fail_count=new_fail_count)
+            if notified_http:
+                incident = get_active_incident_state(site_id)
+                incident_reminder = reminder_kind(now, incident, preferences, last_http_ts)
+                if incident_reminder:
+                    heading = ("⏱ Длительный сбой продолжается" if incident_reminder == "prolonged"
+                               else "🔁 Повторное напоминание о сбое")
+                    issues.append(heading + "\n\n" + format_down_alert(
+                        url, http_details, new_fail_count,
+                        incident_started_at=incident_started_at,
+                        last_success_at=last_success_at,
+                    ))
         elif http_ok and not confirmed_transient_http and (
             notified_http or
             (incident_started_at and http_fail_count >= HTTP_FAILURE_THRESHOLD)
         ):
             try:
-                recovery_text = format_recovery_alert(url, http_details, incident_started_at=incident_started_at)
-                agent_results = await check_with_agents(
-                    url,
-                    checks=["http"],
-                    timeout_sec=AGENT_ALERT_CHECK_TIMEOUT_SECONDS,
-                )
-                recovery_text = append_agent_results(recovery_text, agent_results)
-                await bot.send_message(
-                    user_id,
-                    recovery_text
-                )
+                if notified_http and preferences["notify_recovery"]:
+                    recovery_text = format_recovery_alert(url, http_details, incident_started_at=incident_started_at)
+                    agent_results = await check_with_agents(
+                        url,
+                        checks=["http"],
+                        timeout_sec=AGENT_ALERT_CHECK_TIMEOUT_SECONDS,
+                    )
+                    recovery_text = append_agent_results(recovery_text, agent_results)
+                    await bot.send_message(user_id, recovery_text)
             except TelegramForbiddenError:
                 await notify_block(bot, user_id, url)
                 return
@@ -256,13 +276,13 @@ async def process_site(bot, site_row):
 
         # SSL
         if 0 <= ssl_days <= 14:
-            if (not notified_ssl) or (not last_ssl_ts or (now - last_ssl_ts).days >= 1):
+            if preferences["notify_ssl"] and ((not notified_ssl) or (not last_ssl_ts or (now - last_ssl_ts).days >= 1)):
                 issues.append(format_ssl_expiry_alert(url, ssl_days))
                 log_event(url, f"Сертификат истекает через {ssl_days} дней")
                 notification_flags["ssl"] = True
                 notification_flags["ssl_ts"] = now
         else:
-            if notified_ssl:
+            if notified_ssl and preferences["notify_ssl"]:
                 try:
                     await bot.send_message(user_id, f"✅ SSL продлён для {url} (осталось {ssl_days} дней)")
                 except TelegramForbiddenError:
@@ -273,13 +293,13 @@ async def process_site(bot, site_row):
 
         # Domain
         if 0 <= domain_days <= 14:
-            if (not notified_domain) or (not last_domain_ts or (now - last_domain_ts).days >= 1):
+            if preferences["notify_domain"] and ((not notified_domain) or (not last_domain_ts or (now - last_domain_ts).days >= 1)):
                 issues.append(format_domain_expiry_alert(url, domain_days, registrar, contact_url))
                 log_event(url, f"Домен истекает через {domain_days} дней")
                 notification_flags["domain"] = True
                 notification_flags["domain_ts"] = now
         else:
-            if notified_domain:
+            if notified_domain and preferences["notify_domain"]:
                 try:
                     await bot.send_message(user_id, f"✅ Домен продлён для {url} (осталось {domain_days} дней)")
                 except TelegramForbiddenError:
@@ -305,6 +325,9 @@ async def process_site(bot, site_row):
             except Exception as e:
                 log_event(url, f"Не удалось отправить уведомление пользователю {user_id}: {type(e).__name__}: {e}")
                 return
+            if incident_reminder:
+                mark_incident_reminder(site_id, prolonged=incident_reminder == "prolonged",
+                                       notified_at=now)
             if notification_flags:
                 set_site_flags_by_id(site_id, **notification_flags)
 

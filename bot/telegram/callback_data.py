@@ -26,5 +26,9 @@ def site_history_callback(site_id: int) -> str:
     return f"hist:{int(site_id)}"
 
 
+def site_ack_callback(site_id: int) -> str:
+    return f"ack:{int(site_id)}"
+
+
 def admin_delete_callback(site_id: int) -> str:
     return f"ad:{int(site_id)}"

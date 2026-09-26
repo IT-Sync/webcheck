@@ -20,6 +20,14 @@ remain compatible.
   management, status filters, and problem-first sorting.
 - Fast Mini App startup from a session cache while current data loads in the
   background.
+- Owner notification policies with selectable DOWN, recovery, SSL, and domain
+  events, optional outage repeats, prolonged-outage alerts, and per-resource
+  overrides through the authenticated API. Incident acknowledgement suppresses
+  repeat/prolonged reminders until recovery.
+- Bulk add, group assignment, pause, and resume operations with bounded input,
+  existing project permissions, and an individual result for every resource.
+- Deliberately published public status pages containing only an explicitly
+  selected service subset, coarse availability, and operator-written updates.
 - Resource groups, multiple tags, independent group/tag filtering, and
   selectable daily, weekly, and monthly history with regional availability,
   average and peak latency charts, structured central incidents, and monitoring
@@ -51,6 +59,7 @@ bot/
   telegram/            Bot handlers, callbacks, scheduler, and notifications
   webapp/              Telegram Mini App API, authentication, validation, assets
   admin_console/       Operator web console and shared aiohttp server
+  public_status/       Unauthenticated privacy-limited status page renderer
   agent_server/        WebSocket server and connected-agent registry
   checks/              HTTP, TLS, WHOIS, GeoIP, and subdomain checks
   infra/               PostgreSQL access and additive startup migrations
@@ -262,6 +271,26 @@ inside active windows, manual checks remain available, and their observed agent
 results still contribute to availability. Completed maintenance is shown separately in history and weekly reports. Existing sites start with no
 group or tags and require no operator data migration.
 
+The **Bulk / Publication** control provides bounded list import (up to 50
+addresses) and actions over up to 100 selected resources. Each item is validated
+and authorized independently, so one invalid address or inaccessible resource
+does not hide successful changes. The response ledger identifies every success
+and failure.
+
+The same control contains owner notification defaults. DOWN, recovery, SSL, and
+domain events can be selected independently; outage repeats and one-time
+prolonged-outage notices accept intervals from zero (disabled) through seven
+days. An owner can also set or clear a resource override through
+`/api/webapp/sites/{id}/notifications`. Acknowledging an active incident records
+the responder and stops repeat and prolonged reminders. Active maintenance
+removes a resource from the scheduled check set, so it cannot generate them.
+
+Project owners may save a private status-page draft, explicitly select services,
+choose public display names through the API, add incident updates, and then opt
+in to publication. Only published pages resolve at `/status/{slug}`. Public
+responses omit URLs, ownership, projects, groups, tags, diagnostics, agent data,
+and monitoring history.
+
 Adding a site validates DNS but does not perform a full HTTP/TLS/WHOIS check in
 the request path. DNS work has a configurable timeout, and blocking DNS and TLS
 operations run outside the asyncio event loop. The first complete result is
@@ -399,7 +428,11 @@ After deployment, fully close and reopen the Telegram Mini App, then verify:
 5. Existing sites appear in Personal. Create an invitation, open it as another Telegram user, verify the assigned role, one-time use, expiry, and owner-only revocation.
 6. Feedback closes the Mini App, captures text and attachments in the bot,
    displays them under `/admin/feedback`, and delivers an administrator reply.
-7. Bot polling, scheduled monitoring, admin console, and remote agents continue
+7. Import a mixed valid/invalid site list and confirm each row has its own result;
+   select sites and test group, pause, and resume actions.
+8. Save notification rules, acknowledge a test incident, and confirm reminders
+   stop. Publish a selected status page, then unpublish it and confirm a 404.
+9. Bot polling, scheduled monitoring, admin console, and remote agents continue
    to operate.
 
 ## Local Development and Tests

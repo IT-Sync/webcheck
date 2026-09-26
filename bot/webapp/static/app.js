@@ -18,6 +18,7 @@
     sort: "priority", query: "", group: "all", tag: "all", project: "all", projects: [], historySite: null,
     maintenanceSite: null,
     historyDays: 7, historyRequest: 0,
+    selectedSites: new Set(),
   };
   const elements = {
     list: document.querySelector("#site-list"),
@@ -55,6 +56,35 @@
     teamCopyInvite: document.querySelector("#team-copy-invite"),
     teamError: document.querySelector("#team-error"),
     monitorSection: document.querySelector("#monitor-section"),
+    operationsDialog: document.querySelector("#operations-dialog"),
+    operationsError: document.querySelector("#operations-error"),
+    opsTabs: [...document.querySelectorAll("[data-ops-tab]")],
+    opsPanels: [...document.querySelectorAll("[data-ops-panel]")],
+    bulkProject: document.querySelector("#bulk-project"),
+    bulkUrls: document.querySelector("#bulk-urls"),
+    bulkGroup: document.querySelector("#bulk-group"),
+    bulkAdd: document.querySelector("#bulk-add"),
+    bulkSelectedCount: document.querySelector("#bulk-selected-count"),
+    bulkResults: document.querySelector("#bulk-results"),
+    notificationForm: document.querySelector("#notification-form"),
+    notificationSite: document.querySelector("#notification-site"),
+    clearNotificationOverride: document.querySelector("#clear-notification-override"),
+    notifyDown: document.querySelector("#notify-down"),
+    notifyRecovery: document.querySelector("#notify-recovery"),
+    notifySsl: document.querySelector("#notify-ssl"),
+    notifyDomain: document.querySelector("#notify-domain"),
+    notifyRepeat: document.querySelector("#notify-repeat"),
+    notifyProlonged: document.querySelector("#notify-prolonged"),
+    statusPageForm: document.querySelector("#status-page-form"),
+    statusProject: document.querySelector("#status-project"),
+    statusName: document.querySelector("#status-name"),
+    statusSlug: document.querySelector("#status-slug"),
+    statusDescription: document.querySelector("#status-description"),
+    statusServiceList: document.querySelector("#status-service-list"),
+    statusPublished: document.querySelector("#status-published"),
+    statusUpdate: document.querySelector("#status-update"),
+    publishUpdate: document.querySelector("#publish-update"),
+    statusLink: document.querySelector("#status-link"),
     maintenanceDialog: document.querySelector("#maintenance-dialog"),
     maintenanceForm: document.querySelector("#maintenance-form"),
     maintenanceTitle: document.querySelector("#maintenance-title"),
@@ -192,6 +222,17 @@
 
   function makeSiteCard(site) {
     const card = elements.template.content.firstElementChild.cloneNode(true);
+    const selector = card.querySelector(".bulk-check input");
+    selector.checked = state.selectedSites.has(site.id);
+    if (site.role === "viewer") {
+      selector.closest(".bulk-check").remove();
+    } else {
+      selector.addEventListener("change", () => {
+        if (selector.checked) state.selectedSites.add(site.id);
+        else state.selectedSites.delete(site.id);
+        elements.bulkSelectedCount.textContent = String(state.selectedSites.size);
+      });
+    }
     card.dataset.siteId = site.id;
     card.dataset.status = site.status_kind;
     card.querySelector(".site-host").textContent = hostFromUrl(site.url);
@@ -950,6 +991,168 @@
     }
   }
 
+  function operationsFailure(error) {
+    elements.operationsError.textContent = error.message;
+    elements.operationsError.classList.remove("hidden");
+    telegram?.HapticFeedback?.notificationOccurred("error");
+  }
+
+  function renderBulkResults(results) {
+    elements.bulkResults.replaceChildren(...results.map((result) => {
+      const row = document.createElement("span");
+      row.classList.toggle("fail", !result.ok);
+      row.textContent = `${result.ok ? "✓" : "×"} ${result.item} · ${result.message || (result.ok ? "добавлен" : result.code)}`;
+      return row;
+    }));
+  }
+
+  async function loadNotificationPreferences() {
+    try {
+      const siteId = elements.notificationSite.value;
+      const path = siteId ? `/api/webapp/sites/${siteId}/notifications` : "/api/webapp/notifications";
+      const { preferences } = await api(path);
+      elements.clearNotificationOverride.classList.toggle("hidden", !siteId || preferences.scope !== "site");
+      elements.notifyDown.checked = preferences.notify_down;
+      elements.notifyRecovery.checked = preferences.notify_recovery;
+      elements.notifySsl.checked = preferences.notify_ssl;
+      elements.notifyDomain.checked = preferences.notify_domain;
+      elements.notifyRepeat.value = preferences.repeat_minutes;
+      elements.notifyProlonged.value = preferences.prolonged_minutes;
+    } catch (error) { operationsFailure(error); }
+  }
+
+  function renderStatusServices(projectId, configured = []) {
+    const selected = new Map(configured.map((item) => [Number(item.site_id), item.display_name]));
+    const services = state.sites.filter((site) => site.project_id === projectId && site.role === "owner");
+    elements.statusServiceList.replaceChildren(...services.map((site) => {
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      const name = document.createElement("span");
+      checkbox.type = "checkbox"; checkbox.dataset.siteId = String(site.id);
+      checkbox.checked = selected.has(site.id);
+      name.textContent = selected.get(site.id) || hostFromUrl(site.url);
+      label.append(checkbox, name); return label;
+    }));
+  }
+
+  async function loadStatusPage() {
+    const projectId = Number(elements.statusProject.value);
+    if (!projectId) return;
+    try {
+      const payload = await api(`/api/webapp/projects/${projectId}/status-page`);
+      const page = payload.status_page;
+      const project = state.projects.find((item) => item.id === projectId);
+      elements.statusName.value = page?.name || project?.name || "";
+      elements.statusSlug.value = page?.slug || "";
+      elements.statusDescription.value = page?.description || "";
+      elements.statusPublished.checked = Boolean(page?.is_published);
+      renderStatusServices(projectId, page?.sites || []);
+      elements.statusLink.classList.toggle("hidden", !page?.is_published);
+      if (page?.is_published) elements.statusLink.href = `/status/${page.slug}`;
+    } catch (error) { operationsFailure(error); }
+  }
+
+  async function selectOpsTab(tab) {
+    elements.opsTabs.forEach((button) => button.classList.toggle("active", button.dataset.opsTab === tab));
+    elements.opsPanels.forEach((panel) => panel.classList.toggle("hidden", panel.dataset.opsPanel !== tab));
+    elements.operationsError.classList.add("hidden");
+    if (tab === "notify") await loadNotificationPreferences();
+    if (tab === "public") await loadStatusPage();
+  }
+
+  function openOperations() {
+    const editable = state.projects.filter((project) => project.role !== "viewer");
+    const owned = state.projects.filter((project) => project.role === "owner");
+    const ownerSites = state.sites.filter((site) => site.role === "owner");
+    elements.bulkProject.replaceChildren(...editable.map((project) => new Option(project.name, project.id)));
+    elements.statusProject.replaceChildren(...owned.map((project) => new Option(project.name, project.id)));
+    elements.notificationSite.replaceChildren(
+      new Option("Все ресурсы по умолчанию", ""),
+      ...ownerSites.map((site) => new Option(hostFromUrl(site.url), String(site.id))),
+    );
+    elements.bulkSelectedCount.textContent = String(state.selectedSites.size);
+    elements.operationsDialog.showModal(); document.body.classList.add("dialog-open");
+    telegram?.BackButton?.show(); selectOpsTab("bulk");
+  }
+
+  function closeOperations() { if (elements.operationsDialog.open) elements.operationsDialog.close(); }
+
+  async function bulkAddSites() {
+    const urls = elements.bulkUrls.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+    elements.bulkAdd.disabled = true;
+    try {
+      const payload = await api("/api/webapp/sites/bulk", { method: "POST", timeoutMs: 60000,
+        body: JSON.stringify({ action: "add", urls, project_id: Number(elements.bulkProject.value), site_group: elements.bulkGroup.value }) });
+      renderBulkResults(payload.results); await load();
+    } catch (error) { operationsFailure(error); }
+    finally { elements.bulkAdd.disabled = false; }
+  }
+
+  async function runBulkAction(action) {
+    if (!state.selectedSites.size) return operationsFailure(new Error("Сначала отметьте ресурсы в списке"));
+    const body = { action, site_ids: [...state.selectedSites] };
+    if (action === "group") {
+      const value = window.prompt("Группа для выбранных ресурсов (пусто — убрать):", "");
+      if (value === null) return; body.site_group = value;
+    }
+    try {
+      const payload = await api("/api/webapp/sites/bulk", { method: "POST", body: JSON.stringify(body) });
+      renderBulkResults(payload.results); await load();
+    } catch (error) { operationsFailure(error); }
+  }
+
+  async function saveNotificationPreferences(event) {
+    event.preventDefault();
+    try {
+      const siteId = elements.notificationSite.value;
+      const path = siteId ? `/api/webapp/sites/${siteId}/notifications` : "/api/webapp/notifications";
+      await api(path, { method: "PUT", body: JSON.stringify({
+        notify_down: elements.notifyDown.checked, notify_recovery: elements.notifyRecovery.checked,
+        notify_ssl: elements.notifySsl.checked, notify_domain: elements.notifyDomain.checked,
+        repeat_minutes: Number(elements.notifyRepeat.value || 0),
+        prolonged_minutes: Number(elements.notifyProlonged.value || 0),
+      }) });
+      showNotice("Правила уведомлений сохранены"); haptic("medium");
+    } catch (error) { operationsFailure(error); }
+  }
+
+
+  async function clearNotificationOverride() {
+    const siteId = elements.notificationSite.value;
+    if (!siteId) return;
+    try {
+      await api(`/api/webapp/sites/${siteId}/notifications`, { method: "DELETE" });
+      await loadNotificationPreferences();
+      showNotice("Ресурс снова использует правила владельца");
+    } catch (error) { operationsFailure(error); }
+  }
+
+  async function saveStatusPage(event) {
+    event.preventDefault(); const projectId = Number(elements.statusProject.value);
+    const sites = [...elements.statusServiceList.querySelectorAll("input:checked")].map((input) => ({
+      site_id: Number(input.dataset.siteId), display_name: input.nextElementSibling.textContent,
+    }));
+    try {
+      const payload = await api(`/api/webapp/projects/${projectId}/status-page`, { method: "PUT", body: JSON.stringify({
+        slug: elements.statusSlug.value, name: elements.statusName.value,
+        description: elements.statusDescription.value, is_published: elements.statusPublished.checked, sites,
+      }) });
+      const page = payload.status_page;
+      elements.statusLink.classList.toggle("hidden", !page.is_published);
+      elements.statusLink.href = `/status/${page.slug}`;
+      showNotice(page.is_published ? "Публичная страница опубликована" : "Черновик страницы сохранён");
+    } catch (error) { operationsFailure(error); }
+  }
+
+  async function publishStatusUpdate() {
+    const projectId = Number(elements.statusProject.value);
+    try {
+      await api(`/api/webapp/projects/${projectId}/status-page/updates`, { method: "POST",
+        body: JSON.stringify({ message: elements.statusUpdate.value }) });
+      elements.statusUpdate.value = ""; showNotice("Обновление опубликовано");
+    } catch (error) { operationsFailure(error); }
+  }
+
   async function load() {
     hideNotice();
     try {
@@ -971,6 +1174,22 @@
   document.querySelector("#reset-filter").addEventListener("click", () => setFilter("all"));
   elements.metrics.forEach((metric) => {
     metric.addEventListener("click", () => setFilter(metric.dataset.filter));
+  });
+  document.querySelector("#open-operations").addEventListener("click", openOperations);
+  document.querySelector("#close-operations").addEventListener("click", closeOperations);
+  elements.opsTabs.forEach((button) => button.addEventListener("click", () => selectOpsTab(button.dataset.opsTab)));
+  elements.bulkAdd.addEventListener("click", bulkAddSites);
+  document.querySelectorAll("[data-bulk-action]").forEach((button) => button.addEventListener("click", () => runBulkAction(button.dataset.bulkAction)));
+  elements.notificationForm.addEventListener("submit", saveNotificationPreferences);
+  elements.statusPageForm.addEventListener("submit", saveStatusPage);
+  elements.notificationSite.addEventListener("change", loadNotificationPreferences);
+  elements.clearNotificationOverride.addEventListener("click", clearNotificationOverride);
+  elements.publishUpdate.addEventListener("click", publishStatusUpdate);
+  elements.statusProject.addEventListener("change", loadStatusPage);
+  elements.operationsDialog.addEventListener("close", cleanupAddDialog);
+  elements.operationsDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeOperations(); });
+  elements.operationsDialog.addEventListener("click", (event) => {
+    if (event.target === elements.operationsDialog) closeOperations();
   });
   elements.sort.addEventListener("change", () => {
     state.sort = elements.sort.value;
@@ -1050,6 +1269,7 @@
   telegram?.BackButton?.onClick(closeHistory);
   telegram?.BackButton?.onClick(closeMaintenance);
   telegram?.BackButton?.onClick(closeTeam);
+  telegram?.BackButton?.onClick(closeOperations);
 
   telegram?.ready();
   telegram?.expand();

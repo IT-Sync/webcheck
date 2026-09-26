@@ -23,8 +23,8 @@ class WebAppStaticMarkupTest(unittest.TestCase):
     def test_frontend_assets_have_cache_busting_version(self):
         source = INDEX.read_text(encoding="utf-8")
 
-        self.assertIn("/app/static/app.css?v=12", source)
-        self.assertIn("/app/static/app.js?v=12", source)
+        self.assertIn("/app/static/app.css?v=13", source)
+        self.assertIn("/app/static/app.js?v=13", source)
 
     def test_status_metrics_are_filter_controls(self):
         source = INDEX.read_text(encoding="utf-8")
@@ -53,7 +53,7 @@ class WebAppStaticMarkupTest(unittest.TestCase):
         self.assertIn('id="history-maintenance"', markup)
         script = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("history.summary.max_latency_ms", script)
-        self.assertIn("historyDays: 7, historyRequest: 0,\n  };", script)
+        self.assertIn("historyDays: 7, historyRequest: 0,", script)
         self.assertIn("historyLatencyChart: document.querySelector", script)
         self.assertIn("historyIncidents: document.querySelector", script)
         self.assertIn("renderTags()", script)
@@ -101,6 +101,23 @@ class WebAppStaticMarkupTest(unittest.TestCase):
         self.assertIn('id="open-feedback"', markup)
         self.assertIn('/api/webapp/feedback/start', script)
         self.assertIn('telegram?.close()', script)
+
+    def test_operations_and_publication_controls_are_available(self):
+        markup = INDEX.read_text(encoding="utf-8")
+        script = SCRIPT.read_text(encoding="utf-8")
+        server = SERVER.read_text(encoding="utf-8")
+
+        self.assertIn('id="operations-dialog"', markup)
+        self.assertIn('id="bulk-urls"', markup)
+        self.assertIn('id="notification-form"', markup)
+        self.assertIn('id="status-page-form"', markup)
+        self.assertIn('id="status-published"', markup)
+        self.assertIn('/api/webapp/sites/bulk', script)
+        self.assertIn('/api/webapp/notifications', script)
+        self.assertIn('/status/${page.slug}', script)
+        self.assertIn('async def bulk_sites', server)
+        self.assertIn('async def project_status_page', server)
+        self.assertIn('acknowledge_incident', server)
 
     def test_direct_access_uses_a_separate_placeholder(self):
         markup = INDEX.read_text(encoding="utf-8")

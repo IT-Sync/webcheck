@@ -14,7 +14,8 @@ from bot.infra.db import (
     admin_delete_site_by_id, set_site_paused_by_id, set_site_paused,
     get_site_pause_status, create_maintenance_window,
     add_user_feedback_message, cancel_feedback_waiting,
-    is_feedback_waiting, start_feedback_waiting, consume_project_invite
+    is_feedback_waiting, start_feedback_waiting, consume_project_invite,
+    acknowledge_site_incident,
 )
 from bot.agent_server.checks import check_with_agents
 from bot.checks.monitor import get_geo_info
@@ -28,7 +29,7 @@ from bot.telegram.admin_commands import (
 from bot.telegram.callback_data import (
     admin_delete_callback, site_delete_callback, site_pause_callback,
     site_resume_callback, site_status_callback, site_check_now_callback,
-    site_history_callback, site_pause_1h_callback
+    site_ack_callback, site_history_callback, site_pause_1h_callback
 )
 from bot.core.status_formatter import (
     append_agent_results, format_status_text, format_user_status_message,
@@ -440,6 +441,26 @@ async def inline_check_now(query: types.CallbackQuery):
     await query.answer("Проверяю в фоне...")
     await query.message.answer(f"🔄 Запустил живую проверку: {site[3]}")
     asyncio.create_task(send_status_report(query.from_user.id, site[3], query.message.bot, site_id=site_id))
+
+
+@router.callback_query(F.data.startswith("ack:"))
+async def inline_acknowledge_incident(query: types.CallbackQuery):
+    try:
+        site_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await query.answer("❌ Неверные данные", show_alert=True)
+    site = get_site_for_user(site_id, query.from_user.id)
+    if not site:
+        return await query.answer("❌ Сайт не найден", show_alert=True)
+    if not acknowledge_site_incident(site_id, query.from_user.id):
+        return await query.answer("Инцидент уже принят или завершён", show_alert=True)
+    log_user_action(query.from_user.id, f"Принял инцидент: {site[3]}",
+                    query.from_user.username)
+    await query.message.answer(
+        f"🤝 Инцидент принят: {site[3]}\n"
+        "Повторные напоминания отключены до восстановления."
+    )
+    await query.answer("Инцидент принят")
 
 @router.callback_query(F.data.startswith("p1h:"))
 async def inline_pause_one_hour(query: types.CallbackQuery):
