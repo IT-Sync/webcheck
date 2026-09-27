@@ -50,8 +50,10 @@ the feedback inbox with media support and bot replies are implemented. The
 current history includes availability, average and peak latency, a per-agent
 regional breakdown, durable central incident intervals, acknowledgement,
 configurable notification policies, bounded bulk operations, and deliberately
-published status pages. Incident alerts create an auto-expiring one-hour
-maintenance window. Suggested next delivery order is regional classification.
+published status pages. Per-resource status/text/JSON assertions and durable
+IP/NS/MX change monitoring with old/new event values are also implemented.
+Incident alerts create an auto-expiring one-hour maintenance window. Suggested
+next delivery order is regional classification.
 
 ### High Priority
 
@@ -67,14 +69,5 @@ maintenance window. Suggested next delivery order is regional classification.
   threshold is reached; allow them to gate global outage alerts while retaining
   separately configurable regional alerts and defined unavailable-agent
   behavior.
-
-### Medium Priority
-
-- [ ] Content and API checks: validate expected HTTP status codes, required page
-  text, or JSON values. Preserve public-target validation for new check paths.
-- [ ] Build DNS change monitoring on the existing last-successful resolved-IP
-  snapshot: detect and notify about IP, NS, and MX changes and retain both the
-  previous and new values in event history instead of only overwriting the
-  current IP.
 
 ### Later

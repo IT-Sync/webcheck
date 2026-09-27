@@ -4,6 +4,7 @@ apscheduler
 cryptography
 beautifulsoup4
 python-dotenv
+dnspython
 psycopg2-binary
 pyOpenSSL
 whois

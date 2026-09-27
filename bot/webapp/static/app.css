@@ -334,7 +334,7 @@ dialog::backdrop { background: rgba(0, 7, 5, 0.78); backdrop-filter: blur(8px); 
 .team-member-controls select { min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: #08120f; color: var(--paper); font-size: 11px; }
 @media (max-width: 480px) {
 .operations-dialog { width: min(680px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow-y: auto; }
-.ops-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 22px 0; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: #08120f; }
+.ops-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 22px 0; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: #08120f; }
 .ops-tabs button { padding: 10px 6px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: 700 9px "Courier New", monospace; text-transform: uppercase; }
 .ops-tabs button.active { background: var(--acid); color: #07110f; }
 .ops-panel h3 { margin: 24px 0 8px; font: 400 21px Georgia,serif; }

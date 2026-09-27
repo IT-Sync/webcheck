@@ -23,8 +23,8 @@ class WebAppStaticMarkupTest(unittest.TestCase):
     def test_frontend_assets_have_cache_busting_version(self):
         source = INDEX.read_text(encoding="utf-8")
 
-        self.assertIn("/app/static/app.css?v=13", source)
-        self.assertIn("/app/static/app.js?v=13", source)
+        self.assertIn("/app/static/app.css?v=14", source)
+        self.assertIn("/app/static/app.js?v=14", source)
 
     def test_status_metrics_are_filter_controls(self):
         source = INDEX.read_text(encoding="utf-8")

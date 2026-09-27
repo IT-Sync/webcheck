@@ -32,6 +32,10 @@ Current behavior:
 - provides project selection, status-counter filters, domain/group/tag search, independent group
   and tag filtering, and problem-first, name, or recent sorting;
 - supports optional resource groups, up to eight tags per resource, and
+- lets owners and managers configure per-resource accepted HTTP codes, required
+  response text, and JSON path/value assertions; scheduled, confirming, and
+  manual central checks share these rules;
+- validates and pins public DNS results before every central HTTP/content request;
   selectable one-day, seven-day, and 30-day history views; the authenticated
   API accepts periods from one to 90 days, uses hourly buckets through seven
   days and daily buckets after that, and combines raw, hourly, and daily agent
@@ -71,14 +75,22 @@ and maintenance; only the owner changes membership.
 Monitoring alerts and scheduled reports still go to the site owner. Removing a
 user with a shared owned project is refused rather than deleting team resources.
 
-Notification defaults preserve prior behavior: DOWN, recovery, SSL, and domain
-events are enabled, while repeat and prolonged-outage reminders are disabled.
+Notification defaults preserve prior behavior and enable DOWN, recovery, SSL,
+domain, and DNS-change events, while repeat and prolonged-outage reminders are disabled.
 Owners may override all six values per resource. Acknowledgement is available
 from the Telegram incident keyboard and authenticated Mini App API; the active
 incident records the responder/time and suppresses repeat/prolonged reminders.
 Recovery closes and resets the incident regardless of notification selection.
 Maintenance remains authoritative because active windows exclude a resource
 from scheduled checks and therefore from alert/reminder evaluation.
+
+Every successful central HTTP/content check updates a structured DNS snapshot.
+The first IP/NS/MX observation is a baseline; later changes retain both old and
+new arrays in durable rows and resource event history. Telegram delivery is
+deduplicated with a persisted delivery timestamp and follows the effective
+owner/resource DNS notification preference. Temporary NS/MX lookup failures do
+not erase known values. Existing scalar `last_resolved_ip` remains synchronized
+for compatibility.
 
 Public status pages are unauthenticated only after an owner explicitly publishes
 one. They expose selected display names, coarse state, last-check timestamps,
@@ -141,8 +153,9 @@ database calls made directly from async handlers can still block the event loop.
 Disposable PostgreSQL integration tests cover commit, rollback, and concurrent
 pool use when `TEST_DATABASE_URL` is set.
 
-`notification_preferences`, `status_pages`, `status_page_sites`, and
-`status_page_updates` are additive tables. Active central incidents also retain
+`notification_preferences`, `site_check_settings`, `site_dns_snapshots`,
+`dns_change_events`, `status_pages`, `status_page_sites`, and `status_page_updates`
+are additive tables. Active central incidents also retain
 acknowledgement and reminder delivery timestamps. The status-page subset is
 transactionally replaced only after every selected site is verified in-project.
 
@@ -209,12 +222,12 @@ migrations. Back up PostgreSQL before major releases.
 
 The product backlog in `TODO.md` now centers on automatic global-versus-regional
 classification, monitoring-health alerts, multi-agent incident confirmation,
-content/API checks, and DNS changes. The proposed next sequence begins with
-regional classification.
+and remaining infrastructure hardening. The proposed next sequence begins with
+regional classification; content/API assertions and DNS-change monitoring are implemented.
 
 ## Validation Baseline
 
-The current suite contains 73 `unittest` tests. The standard run passes 67 and
+The current suite contains 79 `unittest` tests. The standard run passes 73 and
 skips six PostgreSQL integration tests unless `TEST_DATABASE_URL` points to a
 disposable database.
 

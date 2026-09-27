@@ -17,6 +17,8 @@ class ProductFeatureStaticTest(unittest.TestCase):
     def test_additive_schema_contains_feature_storage(self):
         schema = SCHEMA.read_text(encoding="utf-8")
         migration = DB.read_text(encoding="utf-8")
+        for table in ("site_check_settings", "site_dns_snapshots", "dns_change_events"):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", schema)
         for table in ("notification_preferences", "status_pages",
                       "status_page_sites", "status_page_updates"):
             self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", schema)
@@ -30,6 +32,8 @@ class ProductFeatureStaticTest(unittest.TestCase):
         self.assertIn('get_project_role(project_id, user.id) not in ("owner", "manager")', source)
         self.assertIn('get_project_role(project_id, user.id) != "owner"', source)
         self.assertIn("results.append", source)
+        self.assertIn('/sites/{site_id:\\\\d+}/checks', source)
+        self.assertIn("validate_monitoring_target", source)
 
     def test_public_renderer_escapes_copy_and_ignores_private_fields(self):
         fake_db = types.ModuleType("bot.infra.db")

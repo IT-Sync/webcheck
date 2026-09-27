@@ -157,9 +157,34 @@ def ensure_base_schema(cursor, connection):
         notify_recovery BOOLEAN NOT NULL DEFAULT TRUE,
         notify_ssl BOOLEAN NOT NULL DEFAULT TRUE,
         notify_domain BOOLEAN NOT NULL DEFAULT TRUE,
+        notify_dns BOOLEAN NOT NULL DEFAULT TRUE,
         repeat_minutes INTEGER NOT NULL DEFAULT 0 CHECK (repeat_minutes BETWEEN 0 AND 10080),
         prolonged_minutes INTEGER NOT NULL DEFAULT 0 CHECK (prolonged_minutes BETWEEN 0 AND 10080),
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS site_check_settings (
+        site_id INTEGER PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
+        expected_status_codes INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+        required_text TEXT,
+        json_assertions JSONB NOT NULL DEFAULT '{}'::JSONB,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS site_dns_snapshots (
+        site_id INTEGER PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
+        ips TEXT[], ns TEXT[], mx TEXT[],
+        checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS dns_change_events (
+        id BIGSERIAL PRIMARY KEY,
+        site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+        record_type TEXT NOT NULL CHECK (record_type IN ('IP', 'NS', 'MX')),
+        previous_values TEXT[] NOT NULL,
+        new_values TEXT[] NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        notified_at TIMESTAMP
     )''')
 
     cursor.execute('''CREATE TABLE IF NOT EXISTS status_pages (

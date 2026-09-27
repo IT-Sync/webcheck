@@ -16,6 +16,7 @@ from bot.infra.db import (
     add_user_feedback_message, cancel_feedback_waiting,
     is_feedback_waiting, start_feedback_waiting, consume_project_invite,
     acknowledge_site_incident,
+    get_site_check_settings,
 )
 from bot.agent_server.checks import check_with_agents
 from bot.checks.monitor import get_geo_info
@@ -615,7 +616,10 @@ async def admin_user_details(query: types.CallbackQuery):
 
 
 async def send_status_report(user_id, url, bot, site_id=None):
-    result = await check_resource(url)
+    result = await check_resource(
+        url,
+        check_settings=get_site_check_settings(site_id) if site_id else None,
+    )
     agent_results = await check_with_agents(url, checks=["http", "ssl", "domain"])
     status_str = format_status_text(
         result.http,

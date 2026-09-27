@@ -5,10 +5,13 @@ from bot.infra.db import (
     update_site_success, start_site_incident, clear_site_incident,
     get_active_incident_state, get_notification_preferences,
     mark_incident_reminder,
+    get_pending_dns_changes, mark_dns_changes_notified,
+    record_dns_snapshot,
 )
 from bot.infra.db import get_site_flags_by_id, set_site_flags_by_id
 from bot.infra.maintenance import run_database_maintenance
 from bot.agent_server.checks import check_with_agents
+from bot.checks.dns import resolve_dns_snapshot
 from bot.checks.monitor import check_domain_expiry, check_http_details
 from bot.checks.service import check_resource
 from bot.core.notification_policy import reminder_kind
@@ -83,12 +86,13 @@ def should_confirm_http_down(http_fail_count, notified_http):
     )
 
 
-async def confirm_http_down(url):
+async def confirm_http_down(url, check_settings=None):
     return await check_http_details(
         url,
         retries=MONITOR_CONFIRM_HTTP_RETRIES,
         delay=MONITOR_CONFIRM_HTTP_DELAY_SECONDS,
         timeout_seconds=MONITOR_CONFIRM_HTTP_TIMEOUT_SECONDS,
+        check_settings=check_settings,
     )
 
 
@@ -102,12 +106,26 @@ def build_incident_keyboard(site_id):
     return kb.as_markup()
 
 
+def format_dns_change_alert(url, changes):
+    lines = [f"🔄 DNS изменился для {url}"]
+    for change in changes:
+        previous = ", ".join(change["previous_values"]) or "—"
+        current = ", ".join(change["new_values"]) or "—"
+        lines.append(f"{change['record_type']}: {previous} → {current}")
+    return "\n".join(lines)
+
+
 async def process_site(bot, site_row):
     site_id = site_row[0]
     user_id = site_row[1]
     url = site_row[2]
     incident_started_at = site_row[3]
     last_success_at = site_row[4]
+    check_settings = {
+        "expected_status_codes": list(site_row[8] or []),
+        "required_text": site_row[9],
+        "json_assertions": site_row[10] or {},
+    }
     try:
         result = await check_resource(
             url,
@@ -115,6 +133,7 @@ async def process_site(bot, site_row):
             http_retries=MONITOR_HTTP_RETRIES,
             http_delay=MONITOR_HTTP_DELAY_SECONDS,
             http_timeout=MONITOR_HTTP_TIMEOUT_SECONDS,
+            check_settings=check_settings,
         )
         http_details = result.http
         http_ok = http_details["ok"]
@@ -166,7 +185,7 @@ async def process_site(bot, site_row):
 
         if (not http_ok and preferences["notify_down"] and
                 should_confirm_http_down(http_fail_count, notified_http)):
-            confirmed_http_details = await confirm_http_down(url)
+            confirmed_http_details = await confirm_http_down(url, check_settings)
             if confirmed_http_details.get("ok"):
                 http_details = confirmed_http_details
                 http_ok = True
@@ -273,6 +292,38 @@ async def process_site(bot, site_row):
             )
             if http_fail_count:
                 set_site_flags_by_id(site_id, http_fail_count=0)
+
+        if http_ok:
+            try:
+                dns_snapshot = await resolve_dns_snapshot(
+                    url, http_details.get("resolved_ips") or [http_details["ip"]],
+                )
+                record_dns_snapshot(site_id, url, dns_snapshot, checked_at=now)
+            except Exception as exc:
+                print(f"DNS snapshot failed for {url}: {type(exc).__name__}: {exc}")
+
+            pending_dns_changes = get_pending_dns_changes(site_id)
+            if pending_dns_changes:
+                event_ids = [change["id"] for change in pending_dns_changes]
+                if preferences["notify_dns"]:
+                    try:
+                        await bot.send_message(
+                            user_id,
+                            format_dns_change_alert(url, pending_dns_changes),
+                        )
+                    except TelegramForbiddenError:
+                        await notify_block(bot, user_id, url)
+                        return
+                    except Exception as exc:
+                        log_event(
+                            url,
+                            f"Не удалось отправить DNS-уведомление пользователю "
+                            f"{user_id}: {type(exc).__name__}: {exc}",
+                        )
+                    else:
+                        mark_dns_changes_notified(site_id, event_ids, notified_at=now)
+                else:
+                    mark_dns_changes_notified(site_id, event_ids, notified_at=now)
 
         # SSL
         if 0 <= ssl_days <= 14:

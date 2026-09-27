@@ -1,4 +1,5 @@
 import aiohttp
+from aiohttp.abc import AbstractResolver
 import ssl
 import socket
 import asyncio
@@ -10,6 +11,11 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from urllib.parse import urlparse
 
+from bot.core.content_checks import evaluate_response, has_content_assertions
+from bot.core.target_validation import TargetValidationError, resolve_public_addresses
+
+MAX_RESPONSE_BODY_BYTES = 1024 * 1024
+
 
 def resolve_hostname(url):
     hostname = urlparse(url).hostname
@@ -19,6 +25,32 @@ def resolve_hostname(url):
         return socket.gethostbyname(hostname)
     except socket.error:
         return None
+
+class _StaticResolver(AbstractResolver):
+    """Pin an already validated public DNS result for the request lifetime."""
+
+    def __init__(self, hostname, addresses):
+        self.hostname = hostname
+        self.addresses = addresses
+
+    async def resolve(self, host, port=0, family=socket.AF_UNSPEC):
+        if host != self.hostname:
+            raise OSError("Unexpected redirect hostname")
+        return [
+            {
+                "hostname": host,
+                "host": address,
+                "port": port,
+                "family": socket.AF_INET6 if ":" in address else socket.AF_INET,
+                "proto": 0,
+                "flags": 0,
+            }
+            for address in self.addresses
+        ]
+
+    async def close(self):
+        return None
+
 
 #async def check_http(url):
 #    try:
@@ -44,7 +76,11 @@ def resolve_hostname(url):
 #
 #    return False
 
-async def check_http_details(url, retries=3, delay=5, timeout_seconds=12):
+async def check_http_details(
+    url, retries=3, delay=5, timeout_seconds=12, check_settings=None,
+    dns_timeout_seconds=3,
+):
+    check_settings = check_settings or {}
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     headers = {
         "User-Agent": (
@@ -59,14 +95,42 @@ async def check_http_details(url, retries=3, delay=5, timeout_seconds=12):
     }
 
     allow_http_fallback = os.getenv("HTTP_ALLOW_PLAIN_FALLBACK", "1") == "1"
-    resolved_ip = await asyncio.to_thread(resolve_hostname, url)
+    hostname = urlparse(url).hostname
+    try:
+        resolved_ips = await resolve_public_addresses(
+            url, dns_timeout_seconds=dns_timeout_seconds,
+        )
+    except TargetValidationError as exc:
+        return {
+            "ok": False,
+            "status_code": None,
+            "method": None,
+            "url": url,
+            "latency_ms": None,
+            "attempts": 0,
+            "error": str(exc),
+            "ip": None,
+            "resolved_ips": [],
+            "target_validation_failed": True,
+        }
+    resolved_ip = resolved_ips[0]
     urls_to_try = [url]
     if allow_http_fallback and url.startswith("https://"):
         urls_to_try.append("http://" + url[len("https://"):])
 
-    connector = aiohttp.TCPConnector(ssl=False, limit=10)
+    connector = aiohttp.TCPConnector(
+        ssl=False,
+        limit=10,
+        resolver=_StaticResolver(hostname, resolved_ips),
+        use_dns_cache=True,
+    )
     last_error = None
     attempts = 0
+    last_status_code = None
+    last_method = None
+    last_latency_ms = None
+    requires_get = has_content_assertions(check_settings)
+    requires_body = bool(check_settings.get("required_text") or check_settings.get("json_assertions"))
     async with aiohttp.ClientSession(
         timeout=timeout,
         headers=headers,
@@ -76,12 +140,39 @@ async def check_http_details(url, retries=3, delay=5, timeout_seconds=12):
         for attempt in range(1, retries + 1):
             for current_url in urls_to_try:
                 try:
-                    for method in ("HEAD", "GET"):
+                    for method in (("GET",) if requires_get else ("HEAD", "GET")):
                         attempts += 1
                         started = time.monotonic()
                         async with session.request(method, current_url, allow_redirects=False) as resp:
                             latency_ms = int((time.monotonic() - started) * 1000)
+                            last_status_code = resp.status
+                            last_method = method
+                            last_latency_ms = latency_ms
                             print(f"[Attempt {attempt}] {method} {resp.status} for {current_url}")
+                            if requires_get:
+                                raw_body = (await resp.content.read(MAX_RESPONSE_BODY_BYTES + 1)
+                                            if requires_body else b"")
+                                if len(raw_body) > MAX_RESPONSE_BODY_BYTES:
+                                    last_error = "Тело ответа превышает 1 МБ"
+                                    break
+                                body = raw_body.decode(resp.charset or "utf-8", errors="replace")
+                                assertion_error = evaluate_response(
+                                    resp.status, body, check_settings,
+                                )
+                                if assertion_error is None:
+                                    return {
+                                        "ok": True,
+                                        "status_code": resp.status,
+                                        "method": method,
+                                        "url": current_url,
+                                        "latency_ms": latency_ms,
+                                        "attempts": attempts,
+                                        "error": None,
+                                        "ip": resolved_ip,
+                                        "resolved_ips": resolved_ips,
+                                    }
+                                last_error = assertion_error
+                                break
                             # 4xx означает, что сервер отвечает, но может блокировать ботов/доступ.
                             # Для мониторинга доступности это считаем "сайт жив".
                             if 200 <= resp.status < 500:
@@ -94,6 +185,7 @@ async def check_http_details(url, retries=3, delay=5, timeout_seconds=12):
                                     "attempts": attempts,
                                     "error": None,
                                     "ip": resolved_ip,
+                                    "resolved_ips": resolved_ips,
                                 }
 
                             # Если HEAD не дал положительный ответ, пробуем GET.
@@ -103,7 +195,7 @@ async def check_http_details(url, retries=3, delay=5, timeout_seconds=12):
                             break
                 except Exception as e:
                     error_text = str(e)
-                    if "Header value is too long" in error_text:
+                    if "Header value is too long" in error_text and not requires_get:
                         return {
                             "ok": True,
                             "status_code": None,
@@ -113,6 +205,7 @@ async def check_http_details(url, retries=3, delay=5, timeout_seconds=12):
                             "attempts": attempts,
                             "error": "Header value is too long",
                             "ip": resolved_ip,
+                            "resolved_ips": resolved_ips,
                         }
                     last_error = error_text or type(e).__name__
                     print(f"[Attempt {attempt}] Error checking {current_url}: {error_text or type(e).__name__}")
@@ -122,13 +215,14 @@ async def check_http_details(url, retries=3, delay=5, timeout_seconds=12):
 
     return {
         "ok": False,
-        "status_code": None,
-        "method": None,
+        "status_code": last_status_code,
+        "method": last_method,
         "url": urls_to_try[-1],
-        "latency_ms": None,
+        "latency_ms": last_latency_ms,
         "attempts": attempts,
         "error": last_error or "No successful HTTP response",
         "ip": resolved_ip,
+        "resolved_ips": resolved_ips,
     }
 
 

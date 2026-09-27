@@ -1132,17 +1132,21 @@ def get_admin_sites(user_id=None):
 def get_all_site_checks():
     now = datetime.utcnow()
     c.execute("""
-        SELECT id, user_id, url, incident_started_at, last_success_at,
-               last_success_http_status, last_success_latency_ms, last_resolved_ip
-        FROM sites
+        SELECT site.id, site.user_id, site.url, site.incident_started_at,
+               site.last_success_at, site.last_success_http_status,
+               site.last_success_latency_ms, site.last_resolved_ip,
+               COALESCE(settings.expected_status_codes, ARRAY[]::INTEGER[]),
+               settings.required_text, COALESCE(settings.json_assertions, '{}'::JSONB)
+        FROM sites AS site
+        LEFT JOIN site_check_settings AS settings ON settings.site_id = site.id
         WHERE COALESCE(is_paused, FALSE) = FALSE
           AND (paused_until IS NULL OR paused_until <= %s)
           AND NOT EXISTS (
               SELECT 1 FROM maintenance_windows
-              WHERE site_id = sites.id AND cancelled_at IS NULL
+              WHERE site_id = site.id AND cancelled_at IS NULL
                 AND starts_at <= %s AND ends_at > %s
           )
-        ORDER BY id
+        ORDER BY site.id
     """, (now, now, now))
     return c.fetchall()
 
@@ -1206,6 +1210,55 @@ def update_site_status_by_id(site_id, status):
     )
     conn.commit()
 
+def get_site_check_settings(site_id):
+    c.execute("""
+        SELECT expected_status_codes, required_text, json_assertions
+        FROM site_check_settings WHERE site_id = %s
+    """, (site_id,))
+    row = c.fetchone()
+    if not row:
+        return {
+            "expected_status_codes": [],
+            "required_text": None,
+            "json_assertions": {},
+        }
+    assertions = row[2] if not isinstance(row[2], str) else json.loads(row[2])
+    return {
+        "expected_status_codes": list(row[0] or []),
+        "required_text": row[1],
+        "json_assertions": assertions or {},
+    }
+
+
+def set_site_check_settings(site_id, user_id, settings):
+    if not _lock_managed_site(site_id, user_id):
+        conn.rollback()
+        return False
+    try:
+        c.execute("""
+            INSERT INTO site_check_settings (
+                site_id, expected_status_codes, required_text,
+                json_assertions, updated_at
+            ) VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (site_id) DO UPDATE SET
+                expected_status_codes = EXCLUDED.expected_status_codes,
+                required_text = EXCLUDED.required_text,
+                json_assertions = EXCLUDED.json_assertions,
+                updated_at = EXCLUDED.updated_at
+        """, (
+            site_id,
+            settings["expected_status_codes"],
+            settings["required_text"],
+            Json(settings["json_assertions"]),
+            datetime.utcnow(),
+        ))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def update_site_success(site_id, http_status=None, latency_ms=None, resolved_ip=None):
     c.execute(
         """
@@ -1219,6 +1272,122 @@ def update_site_success(site_id, http_status=None, latency_ms=None, resolved_ip=
         (datetime.utcnow(), http_status, latency_ms, resolved_ip, site_id)
     )
     conn.commit()
+
+def record_dns_snapshot(site_id, url, snapshot, checked_at=None):
+    """Persist a successful DNS snapshot and return newly detected changes."""
+    checked_at = checked_at or datetime.utcnow()
+    try:
+        c.execute(
+            "SELECT ips, ns, mx FROM site_dns_snapshots WHERE site_id = %s FOR UPDATE",
+            (site_id,),
+        )
+        row = c.fetchone()
+        incoming = {
+            "IP": snapshot.get("ips"),
+            "NS": snapshot.get("ns"),
+            "MX": snapshot.get("mx"),
+        }
+        if row is None:
+            c.execute("""
+                INSERT INTO site_dns_snapshots (site_id, ips, ns, mx, checked_at)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (
+                site_id, incoming["IP"], incoming["NS"], incoming["MX"], checked_at,
+            ))
+            conn.commit()
+            return []
+
+        previous = {"IP": row[0], "NS": row[1], "MX": row[2]}
+        changes = []
+        for record_type in ("IP", "NS", "MX"):
+            new_values = incoming[record_type]
+            old_values = previous[record_type]
+            if new_values is None or old_values is None:
+                continue
+            old_values = sorted(set(old_values))
+            new_values = sorted(set(new_values))
+            if old_values == new_values:
+                continue
+            c.execute("""
+                INSERT INTO dns_change_events (
+                    site_id, record_type, previous_values, new_values, created_at
+                ) VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """, (site_id, record_type, old_values, new_values, checked_at))
+            event_id = c.fetchone()[0]
+            old_label = ", ".join(old_values) or "—"
+            new_label = ", ".join(new_values) or "—"
+            c.execute(
+                "INSERT INTO events (url, message, created_at) VALUES (%s, %s, %s)",
+                (
+                    url,
+                    f"DNS {record_type} изменён: {old_label} → {new_label}",
+                    checked_at,
+                ),
+            )
+            changes.append({
+                "id": event_id,
+                "record_type": record_type,
+                "previous_values": old_values,
+                "new_values": new_values,
+                "created_at": checked_at,
+            })
+
+        current = {
+            record_type: (
+                sorted(set(incoming[record_type]))
+                if incoming[record_type] is not None
+                else previous[record_type]
+            )
+            for record_type in ("IP", "NS", "MX")
+        }
+        c.execute("""
+            UPDATE site_dns_snapshots
+            SET ips = %s, ns = %s, mx = %s, checked_at = %s
+            WHERE site_id = %s
+        """, (
+            current["IP"], current["NS"], current["MX"], checked_at, site_id,
+        ))
+        if current["IP"]:
+            c.execute(
+                "UPDATE sites SET last_resolved_ip = %s WHERE id = %s",
+                (current["IP"][0], site_id),
+            )
+        conn.commit()
+        return changes
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def get_pending_dns_changes(site_id):
+    c.execute("""
+        SELECT id, record_type, previous_values, new_values, created_at
+        FROM dns_change_events
+        WHERE site_id = %s AND notified_at IS NULL
+        ORDER BY created_at, id
+    """, (site_id,))
+    return [
+        {
+            "id": row[0],
+            "record_type": row[1],
+            "previous_values": list(row[2] or []),
+            "new_values": list(row[3] or []),
+            "created_at": row[4],
+        }
+        for row in c.fetchall()
+    ]
+
+
+def mark_dns_changes_notified(site_id, event_ids, notified_at=None):
+    if not event_ids:
+        return
+    c.execute("""
+        UPDATE dns_change_events SET notified_at = %s
+        WHERE site_id = %s AND id = ANY(%s) AND notified_at IS NULL
+    """, (notified_at or datetime.utcnow(), site_id, list(event_ids)))
+    conn.commit()
+
 
 def start_site_incident(
     site_id,
@@ -1472,6 +1641,7 @@ def get_site_history_for_user(site_id, user_id, days=7):
               OR message ILIKE '%%истекает%%'
               OR message ILIKE '%%продлён%%'
               OR message ILIKE '%%DOWN%%'
+              OR message ILIKE '%%DNS %%'
           )
         ORDER BY created_at DESC
         LIMIT 50
@@ -1689,6 +1859,7 @@ NOTIFICATION_DEFAULTS = {
     "notify_recovery": True,
     "notify_ssl": True,
     "notify_domain": True,
+    "notify_dns": True,
     "repeat_minutes": 0,
     "prolonged_minutes": 0,
 }
@@ -1699,7 +1870,7 @@ def get_notification_preferences(user_id, site_id=None):
     if site_id is not None:
         c.execute("""
             SELECT notify_down, notify_recovery, notify_ssl, notify_domain,
-                   repeat_minutes, prolonged_minutes
+                   notify_dns, repeat_minutes, prolonged_minutes
             FROM notification_preferences
             WHERE user_id = %s AND site_id = %s
         """, (user_id, site_id))
@@ -1708,7 +1879,7 @@ def get_notification_preferences(user_id, site_id=None):
             return dict(zip(NOTIFICATION_DEFAULTS, row), scope="site")
     c.execute("""
         SELECT notify_down, notify_recovery, notify_ssl, notify_domain,
-               repeat_minutes, prolonged_minutes
+               notify_dns, repeat_minutes, prolonged_minutes
         FROM notification_preferences
         WHERE user_id = %s AND site_id IS NULL
     """, (user_id,))
@@ -1721,7 +1892,7 @@ def get_notification_preferences(user_id, site_id=None):
 def set_notification_preferences(user_id, preferences, site_id=None):
     values = {key: preferences.get(key, default)
               for key, default in NOTIFICATION_DEFAULTS.items()}
-    for key in ("notify_down", "notify_recovery", "notify_ssl", "notify_domain"):
+    for key in ("notify_down", "notify_recovery", "notify_ssl", "notify_domain", "notify_dns"):
         if not isinstance(values[key], bool):
             raise ValueError("invalid_notification_boolean")
     for key in ("repeat_minutes", "prolonged_minutes"):
@@ -1734,36 +1905,38 @@ def set_notification_preferences(user_id, preferences, site_id=None):
             c.execute("""
                 INSERT INTO notification_preferences (
                     user_id, site_id, notify_down, notify_recovery, notify_ssl,
-                    notify_domain, repeat_minutes, prolonged_minutes, updated_at
-                ) VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s)
+                    notify_domain, notify_dns, repeat_minutes, prolonged_minutes, updated_at
+                ) VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id) WHERE site_id IS NULL DO UPDATE SET
                     notify_down = EXCLUDED.notify_down,
                     notify_recovery = EXCLUDED.notify_recovery,
                     notify_ssl = EXCLUDED.notify_ssl,
                     notify_domain = EXCLUDED.notify_domain,
+                    notify_dns = EXCLUDED.notify_dns,
                     repeat_minutes = EXCLUDED.repeat_minutes,
                     prolonged_minutes = EXCLUDED.prolonged_minutes,
                     updated_at = EXCLUDED.updated_at
             """, (user_id, values["notify_down"], values["notify_recovery"],
-                  values["notify_ssl"], values["notify_domain"],
+                  values["notify_ssl"], values["notify_domain"], values["notify_dns"],
                   values["repeat_minutes"], values["prolonged_minutes"],
                   datetime.utcnow()))
         else:
             c.execute("""
                 INSERT INTO notification_preferences (
                     user_id, site_id, notify_down, notify_recovery, notify_ssl,
-                    notify_domain, repeat_minutes, prolonged_minutes, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    notify_domain, notify_dns, repeat_minutes, prolonged_minutes, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id, site_id) WHERE site_id IS NOT NULL DO UPDATE SET
                     notify_down = EXCLUDED.notify_down,
                     notify_recovery = EXCLUDED.notify_recovery,
                     notify_ssl = EXCLUDED.notify_ssl,
                     notify_domain = EXCLUDED.notify_domain,
+                    notify_dns = EXCLUDED.notify_dns,
                     repeat_minutes = EXCLUDED.repeat_minutes,
                     prolonged_minutes = EXCLUDED.prolonged_minutes,
                     updated_at = EXCLUDED.updated_at
             """, (user_id, site_id, values["notify_down"], values["notify_recovery"],
-                  values["notify_ssl"], values["notify_domain"],
+                  values["notify_ssl"], values["notify_domain"], values["notify_dns"],
                   values["repeat_minutes"], values["prolonged_minutes"],
                   datetime.utcnow()))
         conn.commit()
@@ -2307,8 +2480,17 @@ def migrate_add_notification_flags():
     c.execute("ALTER TABLE central_incidents ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP")
     c.execute("ALTER TABLE central_incidents ADD COLUMN IF NOT EXISTS last_reminder_at TIMESTAMP")
     c.execute("ALTER TABLE central_incidents ADD COLUMN IF NOT EXISTS prolonged_notified_at TIMESTAMP")
+    c.execute("ALTER TABLE notification_preferences ADD COLUMN IF NOT EXISTS notify_dns BOOLEAN NOT NULL DEFAULT TRUE")
+    c.execute("""
+        INSERT INTO site_dns_snapshots (site_id, ips, checked_at)
+        SELECT id, ARRAY[last_resolved_ip], COALESCE(last_success_at, CURRENT_TIMESTAMP)
+        FROM sites
+        WHERE last_resolved_ip IS NOT NULL
+        ON CONFLICT (site_id) DO NOTHING
+    """)
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_preferences_user_default ON notification_preferences(user_id) WHERE site_id IS NULL")
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_preferences_user_site ON notification_preferences(user_id, site_id) WHERE site_id IS NOT NULL")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_dns_change_events_site_created ON dns_change_events(site_id, created_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_status_page_updates_page_created ON status_page_updates(status_page_id, created_at DESC)")
 
     conn.commit()

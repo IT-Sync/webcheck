@@ -58,6 +58,8 @@ published on a private address reachable from Nginx and protected by a firewall.
   pool and explicit transaction context.
 - `bot/infra/db.py` retains the public persistence function signatures and
   additive startup migrations while routing compatibility cursor/connection
+  Response-assertion parsing and public-target resolution also live here so
+  resource creation, scheduled checks, and manual checks share one policy.
   operations through the repository. `bot/infra/schema.py` creates the base
   tables in the existing order and transaction at import time.
 - `bot/core/` contains URL helpers and formatters that do not depend on Telegram
@@ -113,6 +115,19 @@ access before combining relevant `events`, retained raw agent results,
 `agent_check_hourly` and `agent_check_daily` aggregates, and structured central
 incidents. Requests through seven days use hourly buckets; longer requests use
 daily buckets, up to the 90-day API limit. The UI exposes one-day, seven-day,
+
+Per-resource check settings contain an optional accepted HTTP-code set, required
+text fragment, and bounded JSON path/value map. A configured rule forces a GET;
+body-based assertions read no more than 1 MiB. Scheduled checks, the confirming
+DOWN request, and manual checks all use the same settings. Before connecting,
+the check resolves every target address, rejects the whole result if any address
+is non-public, and pins the validated addresses in the aiohttp resolver.
+
+After a successful central response, the scheduler resolves a DNS snapshot in a
+worker thread. It compares the complete IP set and authoritative zone NS/MX sets
+with the last successful values. The baseline produces no event. Later changes
+are transactionally stored with old and new arrays and mirrored into resource
+history. Pending change rows are marked only after Telegram delivery succeeds;
 and 30-day selections and renders availability plus average and peak latency.
 Availability uses observed remote-agent checks only: missing checks and checks
 omitted during a manual pause or active maintenance window are excluded from the
@@ -173,6 +188,7 @@ response through the same bot before recording it as an administrator message.
 | Telegram | `/start join_<token>` | Telegram sender identity + invite token | Join a project |
 | `11003` | `/api/webapp/sites` | Telegram `initData` | Add a site |
 | `11003` | `/api/webapp/sites/{id}/*` | Telegram `initData` + ownership | Check or mutate a site |
+| `11003` | `/api/webapp/sites/{id}/checks` | Telegram `initData` + manager/owner | Configure status, text, and JSON assertions |
 | `11003` | `/api/webapp/sites/{id}/history` | Telegram `initData` + ownership | Resource history and aggregates |
 | `11003` | `/api/webapp/sites/{id}/tags` | Telegram `initData` + ownership | Replace resource tags |
 | `11003` | `/api/webapp/sites/{id}/maintenance/*` | Telegram `initData` + ownership | Schedule, list, or cancel maintenance |
@@ -290,6 +306,13 @@ as compatibility state for existing scheduler and notification behavior.
 intervals. Overlapping non-cancelled windows for one resource are rejected by the
 repository transaction. Weekly reports include windows overlapping the previous
 seven days and distinguish currently active maintenance from manual pauses.
+
+`site_check_settings` stores optional expected status codes, required response
+text, and JSON assertions without changing legacy `sites` row positions.
+`site_dns_snapshots` stores the latest successful IP/NS/MX arrays, while
+`dns_change_events` durably retains each old/new transition and its Telegram
+delivery timestamp. Existing `sites.last_resolved_ip` values are backfilled as
+the initial IP baseline and remain updated for compatibility.
 
 `notification_preferences` stores one partial-indexed default row per user and
 optional owner-controlled site rows. `central_incidents` stores the responder

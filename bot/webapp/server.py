@@ -9,6 +9,7 @@ from aiohttp import web
 
 from bot.agent_server.checks import check_with_agents
 from bot.checks.service import check_resource
+from bot.core.content_checks import normalize_check_settings
 from bot.core.status_formatter import append_agent_results, format_status_text
 from bot.infra.db import (
     add_site, add_site_to_project, cancel_maintenance_window,
@@ -21,6 +22,7 @@ from bot.infra.db import (
     get_site_by_url_for_user, get_site_by_url_in_project, get_site_role,
     get_project_role, get_projects_for_user, get_project_members,
     get_project_site_count,
+    get_site_check_settings,
     get_site_for_user,
     get_site_history_for_user, get_maintenance_windows_for_site,
     get_sites_with_pause,
@@ -29,6 +31,7 @@ from bot.infra.db import (
     cancel_feedback_waiting,
     set_site_paused_by_id,
     set_site_group_by_id, set_site_tags_by_id,
+    set_site_check_settings,
     change_project_member_role, remove_project_member,
     set_notification_preferences, upsert_status_page,
     update_site_status_by_id,
@@ -552,6 +555,33 @@ async def site_notification_preferences(request: web.Request) -> web.Response:
 
 
 @require_telegram_user
+async def site_check_settings(request: web.Request) -> web.Response:
+    user = request["telegram_user"]
+    site = _owned_site(request)
+    if not site:
+        return _json_error("Сайт не найден", status=404, code="not_found")
+    if get_site_role(site[0], user.id) not in ("owner", "manager"):
+        return _json_error("Доступно только для управляющего", status=403, code="forbidden")
+    if request.method == "GET":
+        return web.json_response({
+            "ok": True,
+            "settings": get_site_check_settings(site[0]),
+        })
+    try:
+        data = await request.json()
+        settings = normalize_check_settings(data)
+        await validate_monitoring_target(
+            site[3], dns_timeout_seconds=WEB_APP_DNS_TIMEOUT_SECONDS,
+        )
+    except (ValueError, TypeError, TargetValidationError) as exc:
+        return _json_error(str(exc), code="invalid_check_settings")
+    if not set_site_check_settings(site[0], user.id, settings):
+        return _json_error("Ресурс больше недоступен", status=403, code="forbidden")
+    log_user_action(user.id, f"Mini App: updated checks for {site[3]}", user.username)
+    return web.json_response({"ok": True, "settings": settings})
+
+
+@require_telegram_user
 async def acknowledge_incident(request: web.Request) -> web.Response:
     user = request["telegram_user"]
     site = _owned_site(request)
@@ -821,6 +851,7 @@ async def check_site(request: web.Request) -> web.Response:
                 http_retries=1,
                 http_delay=0,
                 http_timeout=WEB_APP_CHECK_TIMEOUT_SECONDS,
+                check_settings=get_site_check_settings(site[0]),
             )
             agent_results = await check_with_agents(
                 site[3],
@@ -874,6 +905,8 @@ def setup_webapp_routes(app: web.Application) -> None:
     app.router.add_post("/api/webapp/projects/{project_id:\\d+}/status-page/updates", create_status_update)
     app.router.add_post("/api/webapp/sites", create_site)
     app.router.add_post("/api/webapp/sites/bulk", bulk_sites)
+    app.router.add_route("GET", "/api/webapp/sites/{site_id:\\d+}/checks", site_check_settings)
+    app.router.add_route("PUT", "/api/webapp/sites/{site_id:\\d+}/checks", site_check_settings)
     app.router.add_route("GET", "/api/webapp/sites/{site_id:\\d+}/notifications", site_notification_preferences)
     app.router.add_route("PUT", "/api/webapp/sites/{site_id:\\d+}/notifications", site_notification_preferences)
     app.router.add_route("DELETE", "/api/webapp/sites/{site_id:\\d+}/notifications", site_notification_preferences)

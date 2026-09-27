@@ -7,9 +7,9 @@
   <meta name="theme-color" content="#07110f">
   <meta name="robots" content="noindex, nofollow">
   <title>Webcheck</title>
-  <link rel="stylesheet" href="/app/static/app.css?v=13">
+  <link rel="stylesheet" href="/app/static/app.css?v=14">
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <script src="/app/static/app.js?v=13" defer></script>
+  <script src="/app/static/app.js?v=14" defer></script>
 </head>
 <body>
   <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -245,7 +245,7 @@
     <section class="dialog-card">
       <button class="dialog-close" id="close-operations" aria-label="Закрыть" type="button">×</button>
       <p class="eyebrow">OPERATIONS / POLICY / PUBLICATION</p><h2>Управление сигналами</h2>
-      <div class="ops-tabs" role="tablist"><button type="button" data-ops-tab="bulk" class="active">Пакетно</button><button type="button" data-ops-tab="notify">Алерты</button><button type="button" data-ops-tab="public">Статус</button></div>
+      <div class="ops-tabs" role="tablist"><button type="button" data-ops-tab="bulk" class="active">Пакетно</button><button type="button" data-ops-tab="checks">Проверки</button><button type="button" data-ops-tab="notify">Алерты</button><button type="button" data-ops-tab="public">Статус</button></div>
       <section class="ops-panel" data-ops-panel="bulk">
         <h3>Добавить список</h3><p class="dialog-copy">Один адрес на строку. Ошибки не отменяют успешно добавленные ресурсы.</p>
         <label for="bulk-project">Проект</label><div class="plain-field"><select id="bulk-project"></select></div>
@@ -256,10 +256,18 @@
         <div class="bulk-actions"><button type="button" data-bulk-action="pause">Пауза</button><button type="button" data-bulk-action="resume">Возобновить</button><button type="button" data-bulk-action="group">Назначить группу</button></div>
         <div class="ops-results" id="bulk-results"></div>
       </section>
+      <form class="ops-panel hidden" data-ops-panel="checks" id="check-settings-form">
+        <h3>Содержимое и API</h3><p class="dialog-copy">Проверяйте точный HTTP-код, обязательный текст или значения JSON. Пустые поля сохраняют обычную проверку доступности.</p>
+        <label for="check-site">Ресурс</label><div class="plain-field"><select id="check-site"></select></div>
+        <label for="expected-status-codes">Допустимые HTTP-коды <small>через запятую</small></label><div class="plain-field"><input id="expected-status-codes" placeholder="200, 204"></div>
+        <label for="required-response-text">Обязательный текст <small>точное вхождение</small></label><div class="plain-field"><input id="required-response-text" maxlength="2000" placeholder="service is healthy"></div>
+        <label for="json-assertions">JSON-значения <small>объект «путь»: значение</small></label><textarea id="json-assertions" rows="5" placeholder='{"status":"ok","data.version":2}'></textarea>
+        <button class="submit-button" type="submit">Сохранить проверки</button>
+      </form>
       <form class="ops-panel hidden" data-ops-panel="notify" id="notification-form">
         <h3>Алерты владельца</h3><p class="dialog-copy">Эти значения применяются ко всем ресурсам без собственного переопределения.</p>
         <label for="notification-site">Область правил</label><div class="plain-field"><select id="notification-site"><option value="">Все ресурсы по умолчанию</option></select></div>
-        <div class="policy-grid"><label><input type="checkbox" id="notify-down"> Недоступность</label><label><input type="checkbox" id="notify-recovery"> Восстановление</label><label><input type="checkbox" id="notify-ssl"> SSL</label><label><input type="checkbox" id="notify-domain"> Домен</label></div>
+        <div class="policy-grid"><label><input type="checkbox" id="notify-down"> Недоступность</label><label><input type="checkbox" id="notify-recovery"> Восстановление</label><label><input type="checkbox" id="notify-ssl"> SSL</label><label><input type="checkbox" id="notify-domain"> Домен</label><label><input type="checkbox" id="notify-dns"> DNS-изменения</label></div>
         <label for="notify-repeat">Повтор при сбое, минут <small>0 — не повторять</small></label><div class="plain-field"><input id="notify-repeat" type="number" min="0" max="10080"></div>
         <label for="notify-prolonged">Алерт о долгом сбое, минут <small>0 — выключен</small></label><div class="plain-field"><input id="notify-prolonged" type="number" min="0" max="10080"></div>
         <button class="submit-button" type="submit">Сохранить правила</button>

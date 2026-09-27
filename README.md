@@ -13,6 +13,9 @@ remain compatible.
 ## Features
 
 - Scheduled HTTP, TLS, WHOIS, and GeoIP checks with Telegram alerts.
+- Per-resource response assertions for explicit HTTP status codes, required
+  page text, and JSON values addressed by dotted paths and array indexes.
+- Successful-check DNS monitoring for IP, NS, and MX changes with durable old/new values.
 - Consecutive-failure thresholds and a confirming check before a DOWN alert.
 - Telegram commands and inline controls for adding, checking, pausing, resuming,
   and deleting resources.
@@ -20,7 +23,7 @@ remain compatible.
   management, status filters, and problem-first sorting.
 - Fast Mini App startup from a session cache while current data loads in the
   background.
-- Owner notification policies with selectable DOWN, recovery, SSL, and domain
+- Owner notification policies with selectable DOWN, recovery, SSL, domain, and DNS-change
   events, optional outage repeats, prolonged-outage alerts, and per-resource
   overrides through the authenticated API. Incident acknowledgement suppresses
   repeat/prolonged reminders until recovery.
@@ -32,8 +35,8 @@ remain compatible.
   selectable daily, weekly, and monthly history with regional availability,
   average and peak latency charts, structured central incidents, and monitoring
   events.
-- Bounded DNS validation when a site is added, including rejection of private,
-  loopback, link-local, and other non-public targets.
+- Bounded DNS validation when a site is added or checked, including rejection
+  of private, loopback, link-local, and other non-public targets.
 - Administrative console with sortable data tables, a searchable all-site
   registry, direct owner navigation, a feedback inbox with bot replies, and
   user, event, message, and agent management.
@@ -271,19 +274,34 @@ inside active windows, manual checks remain available, and their observed agent
 results still contribute to availability. Completed maintenance is shown separately in history and weekly reports. Existing sites start with no
 group or tags and require no operator data migration.
 
-The **Bulk / Publication** control provides bounded list import (up to 50
+The operations control provides bounded list import (up to 50
 addresses) and actions over up to 100 selected resources. Each item is validated
 and authorized independently, so one invalid address or inaccessible resource
 does not hide successful changes. The response ledger identifies every success
 and failure.
 
-The same control contains owner notification defaults. DOWN, recovery, SSL, and
-domain events can be selected independently; outage repeats and one-time
+The **Checks** tab configures a resource's acceptable HTTP status codes, one
+required exact text fragment, and up to 20 JSON value assertions. JSON paths use
+dotted keys and zero-based array indexes, for example `data.items[0].state`.
+Configured response checks use `GET` and inspect at most 1 MiB; an empty policy
+keeps the compatibility availability rule in which HTTP 200–499 means the
+server is reachable. Both configuration and execution resolve and pin public
+addresses before connecting, so content checks do not introduce a private-target path.
+
+The same control contains owner notification defaults. DOWN, recovery, SSL,
+domain, and DNS-change events can be selected independently; outage repeats and one-time
 prolonged-outage notices accept intervals from zero (disabled) through seven
 days. An owner can also set or clear a resource override through
 `/api/webapp/sites/{id}/notifications`. Acknowledging an active incident records
 the responder and stops repeat and prolonged reminders. Active maintenance
 removes a resource from the scheduled check set, so it cannot generate them.
+
+After each successful central HTTP/content check, Webcheck compares the complete
+public IP set and the authoritative zone's NS and MX values with the last
+successful snapshot. The first observation is a baseline. Every later change is
+stored with both the previous and new values, shown in resource history, and
+delivered once when DNS notifications are enabled. Failed lookups do not erase
+the last known values.
 
 Project owners may save a private status-page draft, explicitly select services,
 choose public display names through the API, add incident updates, and then opt
@@ -432,7 +450,11 @@ After deployment, fully close and reopen the Telegram Mini App, then verify:
    select sites and test group, pause, and resume actions.
 8. Save notification rules, acknowledge a test incident, and confirm reminders
    stop. Publish a selected status page, then unpublish it and confirm a 404.
-9. Bot polling, scheduled monitoring, admin console, and remote agents continue
+9. Configure a content check against a public test endpoint and verify a wrong
+   status, missing text, and mismatched JSON value each produce a DOWN result.
+10. Change a test domain's IP, NS, or MX record and confirm history retains both
+    values while Telegram receives one DNS-change notification.
+11. Bot polling, scheduled monitoring, admin console, and remote agents continue
    to operate.
 
 ## Local Development and Tests

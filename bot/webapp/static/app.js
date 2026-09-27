@@ -66,6 +66,11 @@
     bulkAdd: document.querySelector("#bulk-add"),
     bulkSelectedCount: document.querySelector("#bulk-selected-count"),
     bulkResults: document.querySelector("#bulk-results"),
+    checkSettingsForm: document.querySelector("#check-settings-form"),
+    checkSite: document.querySelector("#check-site"),
+    expectedStatusCodes: document.querySelector("#expected-status-codes"),
+    requiredResponseText: document.querySelector("#required-response-text"),
+    jsonAssertions: document.querySelector("#json-assertions"),
     notificationForm: document.querySelector("#notification-form"),
     notificationSite: document.querySelector("#notification-site"),
     clearNotificationOverride: document.querySelector("#clear-notification-override"),
@@ -73,6 +78,7 @@
     notifyRecovery: document.querySelector("#notify-recovery"),
     notifySsl: document.querySelector("#notify-ssl"),
     notifyDomain: document.querySelector("#notify-domain"),
+    notifyDns: document.querySelector("#notify-dns"),
     notifyRepeat: document.querySelector("#notify-repeat"),
     notifyProlonged: document.querySelector("#notify-prolonged"),
     statusPageForm: document.querySelector("#status-page-form"),
@@ -1006,6 +1012,44 @@
     }));
   }
 
+  async function loadCheckSettings() {
+    const siteId = elements.checkSite.value;
+    if (!siteId) return;
+    try {
+      const { settings } = await api(`/api/webapp/sites/${siteId}/checks`);
+      elements.expectedStatusCodes.value = (settings.expected_status_codes || []).join(", ");
+      elements.requiredResponseText.value = settings.required_text || "";
+      const assertions = settings.json_assertions || {};
+      elements.jsonAssertions.value = Object.keys(assertions).length
+        ? JSON.stringify(assertions, null, 2) : "";
+    } catch (error) { operationsFailure(error); }
+  }
+
+  async function saveCheckSettings(event) {
+    event.preventDefault();
+    const siteId = elements.checkSite.value;
+    if (!siteId) return operationsFailure(new Error("Выберите ресурс"));
+    try {
+      const statuses = elements.expectedStatusCodes.value
+        .split(",").map((value) => value.trim()).filter(Boolean).map(Number);
+      const assertions = elements.jsonAssertions.value.trim()
+        ? JSON.parse(elements.jsonAssertions.value) : {};
+      await api(`/api/webapp/sites/${siteId}/checks`, {
+        method: "PUT",
+        body: JSON.stringify({
+          expected_status_codes: statuses,
+          required_text: elements.requiredResponseText.value,
+          json_assertions: assertions,
+        }),
+      });
+      showNotice("Настройки проверки сохранены");
+      haptic("medium");
+    } catch (error) {
+      operationsFailure(error instanceof SyntaxError
+        ? new Error("JSON-проверки должны быть корректным объектом") : error);
+    }
+  }
+
   async function loadNotificationPreferences() {
     try {
       const siteId = elements.notificationSite.value;
@@ -1016,6 +1060,7 @@
       elements.notifyRecovery.checked = preferences.notify_recovery;
       elements.notifySsl.checked = preferences.notify_ssl;
       elements.notifyDomain.checked = preferences.notify_domain;
+      elements.notifyDns.checked = preferences.notify_dns;
       elements.notifyRepeat.value = preferences.repeat_minutes;
       elements.notifyProlonged.value = preferences.prolonged_minutes;
     } catch (error) { operationsFailure(error); }
@@ -1056,6 +1101,7 @@
     elements.opsTabs.forEach((button) => button.classList.toggle("active", button.dataset.opsTab === tab));
     elements.opsPanels.forEach((panel) => panel.classList.toggle("hidden", panel.dataset.opsPanel !== tab));
     elements.operationsError.classList.add("hidden");
+    if (tab === "checks") await loadCheckSettings();
     if (tab === "notify") await loadNotificationPreferences();
     if (tab === "public") await loadStatusPage();
   }
@@ -1064,6 +1110,7 @@
     const editable = state.projects.filter((project) => project.role !== "viewer");
     const owned = state.projects.filter((project) => project.role === "owner");
     const ownerSites = state.sites.filter((site) => site.role === "owner");
+    elements.checkSite.replaceChildren(...state.sites.filter((site) => site.role !== "viewer").map((site) => new Option(hostFromUrl(site.url), String(site.id))));
     elements.bulkProject.replaceChildren(...editable.map((project) => new Option(project.name, project.id)));
     elements.statusProject.replaceChildren(...owned.map((project) => new Option(project.name, project.id)));
     elements.notificationSite.replaceChildren(
@@ -1109,6 +1156,7 @@
       await api(path, { method: "PUT", body: JSON.stringify({
         notify_down: elements.notifyDown.checked, notify_recovery: elements.notifyRecovery.checked,
         notify_ssl: elements.notifySsl.checked, notify_domain: elements.notifyDomain.checked,
+        notify_dns: elements.notifyDns.checked,
         repeat_minutes: Number(elements.notifyRepeat.value || 0),
         prolonged_minutes: Number(elements.notifyProlonged.value || 0),
       }) });
@@ -1181,6 +1229,8 @@
   elements.bulkAdd.addEventListener("click", bulkAddSites);
   document.querySelectorAll("[data-bulk-action]").forEach((button) => button.addEventListener("click", () => runBulkAction(button.dataset.bulkAction)));
   elements.notificationForm.addEventListener("submit", saveNotificationPreferences);
+  elements.checkSettingsForm.addEventListener("submit", saveCheckSettings);
+  elements.checkSite.addEventListener("change", loadCheckSettings);
   elements.statusPageForm.addEventListener("submit", saveStatusPage);
   elements.notificationSite.addEventListener("change", loadNotificationPreferences);
   elements.clearNotificationOverride.addEventListener("click", clearNotificationOverride);
