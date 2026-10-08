@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const source = fs.readFileSync(process.argv[2], "utf8");
 const functions = source.split(/(?=\n  (?:async )?function )/);
 const names = ["hostFromUrl", "tagsForSite", "visibleSites", "render", "renderGroups",
-  "renderTags", "applyBootstrap", "renderCachedBootstrap", "addSite", "bulkAddSites", "runAction"];
+  "renderTags", "loadCheckSettings", "saveCheckSettings", "applyBootstrap", "renderCachedBootstrap", "addSite", "bulkAddSites", "runAction"];
 const production = names.map((name) => functions.find((part) =>
   new RegExp(`^\\n  (?:async )?function ${name}\\(`).test(part))).join("\n");
 const scenario = `
@@ -28,7 +28,9 @@ const updateMetrics = () => {};
 const hideNotice = () => {};
 const haptic = () => {};
 const closeAdd = () => {};
-const showNotice = (message) => {throw new Error(message);};
+const showNotice = (message) => {
+  if (message !== "Настройки проверки сохранены") throw new Error(message);
+};
 const operationsFailure = (error) => {throw error;};
 const renderBulkResults = () => {};
 let response;
@@ -66,6 +68,12 @@ ${production}
   assert.equal(requests.at(-1).options.method, "DELETE");
   assert.equal(button.disabled, false);
   assert.equal(elements.list.children.length, 2);
+  elements.checkSite.value = "7";
+  response = {settings: {dns_monitoring_enabled: false}};
+  await loadCheckSettings();
+  assert.equal(elements.dnsMonitoring.checked, false);
+  await saveCheckSettings({preventDefault() {}});
+  assert.equal(JSON.parse(requests.at(-1).options.body).dns_monitoring_enabled, false);
 })().catch(error => {console.error(error); process.exitCode = 1;});
 `;
 vm.runInNewContext(scenario, {assert, URL, console, process});

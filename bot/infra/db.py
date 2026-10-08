@@ -1141,7 +1141,8 @@ def get_all_site_checks():
                site.last_success_at, site.last_success_http_status,
                site.last_success_latency_ms, site.last_resolved_ip,
                COALESCE(settings.expected_status_codes, ARRAY[]::INTEGER[]),
-               settings.required_text, COALESCE(settings.json_assertions, '{}'::JSONB)
+               settings.required_text, COALESCE(settings.json_assertions, '{}'::JSONB),
+               COALESCE(settings.dns_monitoring_enabled, TRUE)
         FROM sites AS site
         LEFT JOIN site_check_settings AS settings ON settings.site_id = site.id
         WHERE COALESCE(is_paused, FALSE) = FALSE
@@ -1217,7 +1218,7 @@ def update_site_status_by_id(site_id, status):
 
 def get_site_check_settings(site_id):
     c.execute("""
-        SELECT expected_status_codes, required_text, json_assertions
+        SELECT expected_status_codes, required_text, json_assertions, dns_monitoring_enabled
         FROM site_check_settings WHERE site_id = %s
     """, (site_id,))
     row = c.fetchone()
@@ -1226,12 +1227,14 @@ def get_site_check_settings(site_id):
             "expected_status_codes": [],
             "required_text": None,
             "json_assertions": {},
+            "dns_monitoring_enabled": True,
         }
     assertions = row[2] if not isinstance(row[2], str) else json.loads(row[2])
     return {
         "expected_status_codes": list(row[0] or []),
         "required_text": row[1],
         "json_assertions": assertions or {},
+        "dns_monitoring_enabled": bool(row[3]),
     }
 
 
@@ -1240,23 +1243,35 @@ def set_site_check_settings(site_id, user_id, settings):
         conn.rollback()
         return False
     try:
+        dns_enabled = (settings["dns_monitoring_enabled"] if "dns_monitoring_enabled" in settings
+                       else get_site_check_settings(site_id)["dns_monitoring_enabled"])
+        if not isinstance(dns_enabled, bool):
+            raise ValueError("DNS monitoring must be a boolean")
         c.execute("""
             INSERT INTO site_check_settings (
                 site_id, expected_status_codes, required_text,
-                json_assertions, updated_at
-            ) VALUES (%s, %s, %s, %s, %s)
+                json_assertions, dns_monitoring_enabled, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (site_id) DO UPDATE SET
                 expected_status_codes = EXCLUDED.expected_status_codes,
                 required_text = EXCLUDED.required_text,
                 json_assertions = EXCLUDED.json_assertions,
+                dns_monitoring_enabled = EXCLUDED.dns_monitoring_enabled,
                 updated_at = EXCLUDED.updated_at
         """, (
             site_id,
             settings["expected_status_codes"],
             settings["required_text"],
             Json(settings["json_assertions"]),
+            dns_enabled,
             datetime.utcnow(),
         ))
+        if not dns_enabled:
+            c.execute("UPDATE site_dns_snapshots SET baseline_required = TRUE WHERE site_id = %s", (site_id,))
+            c.execute("""
+                UPDATE dns_change_events SET notified_at = %s
+                WHERE site_id = %s AND notified_at IS NULL
+            """, (datetime.utcnow(), site_id))
         conn.commit()
         return True
     except Exception:
@@ -1282,8 +1297,19 @@ def record_dns_snapshot(site_id, url, snapshot, checked_at=None):
     """Persist a successful DNS snapshot and return newly detected changes."""
     checked_at = checked_at or datetime.utcnow()
     try:
+        # Serialize snapshot writes with settings changes on the resource row.
+        c.execute("""
+            SELECT COALESCE(settings.dns_monitoring_enabled, TRUE)
+            FROM sites AS site
+            LEFT JOIN site_check_settings AS settings ON settings.site_id = site.id
+            WHERE site.id = %s FOR UPDATE OF site
+        """, (site_id,))
+        enabled = c.fetchone()
+        if not enabled or not enabled[0]:
+            conn.rollback()
+            return []
         c.execute(
-            "SELECT ips, ns, mx FROM site_dns_snapshots WHERE site_id = %s FOR UPDATE",
+            "SELECT ips, ns, mx, baseline_required FROM site_dns_snapshots WHERE site_id = %s FOR UPDATE",
             (site_id,),
         )
         row = c.fetchone()
@@ -1307,7 +1333,7 @@ def record_dns_snapshot(site_id, url, snapshot, checked_at=None):
         for record_type in ("IP", "NS", "MX"):
             new_values = incoming[record_type]
             old_values = previous[record_type]
-            if new_values is None or old_values is None:
+            if row[3] or new_values is None or old_values is None:
                 continue
             old_values = sorted(set(old_values))
             new_values = sorted(set(new_values))
@@ -1348,10 +1374,11 @@ def record_dns_snapshot(site_id, url, snapshot, checked_at=None):
         }
         c.execute("""
             UPDATE site_dns_snapshots
-            SET ips = %s, ns = %s, mx = %s, checked_at = %s
+            SET ips = %s, ns = %s, mx = %s, checked_at = %s, baseline_required = %s
             WHERE site_id = %s
         """, (
-            current["IP"], current["NS"], current["MX"], checked_at, site_id,
+            current["IP"], current["NS"], current["MX"], checked_at,
+            bool(row[3] and any(incoming[k] is None for k in ("IP", "NS", "MX"))), site_id,
         ))
         if current["IP"]:
             c.execute(
@@ -1370,8 +1397,10 @@ def get_pending_dns_changes(site_id):
         SELECT id, record_type, previous_values, new_values, created_at
         FROM dns_change_events
         WHERE site_id = %s AND notified_at IS NULL
+          AND COALESCE((SELECT dns_monitoring_enabled FROM site_check_settings
+                        WHERE site_id = %s), TRUE)
         ORDER BY created_at, id
-    """, (site_id,))
+    """, (site_id, site_id))
     return [
         {
             "id": row[0],
@@ -2486,6 +2515,8 @@ def migrate_add_notification_flags():
     c.execute("ALTER TABLE central_incidents ADD COLUMN IF NOT EXISTS last_reminder_at TIMESTAMP")
     c.execute("ALTER TABLE central_incidents ADD COLUMN IF NOT EXISTS prolonged_notified_at TIMESTAMP")
     c.execute("ALTER TABLE notification_preferences ADD COLUMN IF NOT EXISTS notify_dns BOOLEAN NOT NULL DEFAULT TRUE")
+    c.execute("ALTER TABLE site_check_settings ADD COLUMN IF NOT EXISTS dns_monitoring_enabled BOOLEAN NOT NULL DEFAULT TRUE")
+    c.execute("ALTER TABLE site_dns_snapshots ADD COLUMN IF NOT EXISTS baseline_required BOOLEAN NOT NULL DEFAULT FALSE")
     c.execute("""
         INSERT INTO site_dns_snapshots (site_id, ips, checked_at)
         SELECT id, ARRAY[last_resolved_ip], COALESCE(last_success_at, CURRENT_TIMESTAMP)

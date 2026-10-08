@@ -117,6 +117,43 @@ def format_dns_change_alert(url, changes):
     return "\n".join(lines)
 
 
+async def monitor_site_dns(bot, site_id, user_id, url, http_details, preferences, now, *, enabled=True):
+    if not enabled:
+        return True
+    try:
+        dns_snapshot = await resolve_dns_snapshot(
+            url, http_details.get("resolved_ips") or [http_details["ip"]],
+        )
+        await asyncio.to_thread(record_dns_snapshot, site_id, url, dns_snapshot, checked_at=now)
+    except Exception as exc:
+        print(f"DNS snapshot failed for {url}: {type(exc).__name__}: {exc}")
+
+    pending_dns_changes = await asyncio.to_thread(get_pending_dns_changes, site_id)
+    if pending_dns_changes:
+        event_ids = [change["id"] for change in pending_dns_changes]
+        if preferences["notify_dns"]:
+            try:
+                await bot.send_message(
+                    user_id,
+                    format_dns_change_alert(url, pending_dns_changes),
+                )
+            except TelegramForbiddenError:
+                await notify_block(bot, user_id, url)
+                return False
+            except Exception as exc:
+                log_event(
+                    url,
+                    f"Не удалось отправить DNS-уведомление пользователю "
+                    f"{user_id}: {type(exc).__name__}: {exc}",
+                )
+            else:
+                await asyncio.to_thread(mark_dns_changes_notified, site_id, event_ids, notified_at=now)
+        else:
+            await asyncio.to_thread(mark_dns_changes_notified, site_id, event_ids, notified_at=now)
+
+    return True
+
+
 async def process_site(bot, site_row):
     site_id = site_row[0]
     user_id = site_row[1]
@@ -132,6 +169,7 @@ async def process_site(bot, site_row):
         "expected_status_codes": list(site_row[8] or []),
         "required_text": site_row[9],
         "json_assertions": site_row[10] or {},
+        "dns_monitoring_enabled": bool(site_row[11]) if len(site_row) > 11 else True,
     }
     try:
         result = await check_resource(
@@ -300,37 +338,11 @@ async def process_site(bot, site_row):
             if http_fail_count:
                 set_site_flags_by_id(site_id, http_fail_count=0)
 
-        if http_ok:
-            try:
-                dns_snapshot = await resolve_dns_snapshot(
-                    url, http_details.get("resolved_ips") or [http_details["ip"]],
-                )
-                record_dns_snapshot(site_id, url, dns_snapshot, checked_at=now)
-            except Exception as exc:
-                print(f"DNS snapshot failed for {url}: {type(exc).__name__}: {exc}")
-
-            pending_dns_changes = get_pending_dns_changes(site_id)
-            if pending_dns_changes:
-                event_ids = [change["id"] for change in pending_dns_changes]
-                if preferences["notify_dns"]:
-                    try:
-                        await bot.send_message(
-                            user_id,
-                            format_dns_change_alert(url, pending_dns_changes),
-                        )
-                    except TelegramForbiddenError:
-                        await notify_block(bot, user_id, url)
-                        return
-                    except Exception as exc:
-                        log_event(
-                            url,
-                            f"Не удалось отправить DNS-уведомление пользователю "
-                            f"{user_id}: {type(exc).__name__}: {exc}",
-                        )
-                    else:
-                        mark_dns_changes_notified(site_id, event_ids, notified_at=now)
-                else:
-                    mark_dns_changes_notified(site_id, event_ids, notified_at=now)
+        if http_ok and not await monitor_site_dns(
+            bot, site_id, user_id, url, http_details, preferences, now,
+            enabled=check_settings["dns_monitoring_enabled"],
+        ):
+            return
 
         # SSL
         if 0 <= ssl_days <= 14:

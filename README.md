@@ -314,6 +314,20 @@ the request path. DNS work has a configurable timeout, and blocking DNS and TLS
 operations run outside the asyncio event loop. The first complete result is
 produced by the scheduler or by **Check now**.
 
+To disable DNS change monitoring for a resource such as `instagram.com`, open
+**Operations → Checks**, select the resource, clear **Мониторинг изменений DNS**,
+and save. Owners and managers can change this setting. IP/NS/MX events and DNS
+alerts stop for that resource; HTTP, SSL, and domain-expiry checks continue. DNS
+resolution required for HTTP checks still runs. Existing DNS history is retained.
+Re-enabling starts from a fresh complete baseline without reporting changes from
+the disabled interval. **Alerts → Уведомления о DNS** controls delivery only and
+continues to retain DNS events when monitoring itself is enabled.
+
+The existing checks API accepts `dns_monitoring_enabled: false` or `true`.
+Omitting this field preserves the current setting; resources without an explicit
+setting continue monitoring DNS. Deploy the additive startup migration with the
+application update and reopen the Mini App to load the new control.
+
 Resources with a missing or malformed stored address are skipped by scheduled
 monitoring without repeated user alerts or network/agent checks. The Mini App
 shows a configuration warning and keeps deletion available. After deploying the

@@ -14,6 +14,10 @@ def normalize_check_settings(payload):
     if not isinstance(payload, dict):
         raise ValueError("Настройки проверки должны быть JSON-объектом")
 
+    dns_enabled = payload.get("dns_monitoring_enabled", True)
+    if not isinstance(dns_enabled, bool):
+        raise ValueError("Мониторинг DNS должен быть включён или выключен")
+
     raw_statuses = payload.get("expected_status_codes", [])
     if raw_statuses is None:
         raw_statuses = []
@@ -61,6 +65,7 @@ def normalize_check_settings(payload):
         normalized_assertions[path] = expected
 
     return {
+        "dns_monitoring_enabled": dns_enabled,
         "expected_status_codes": sorted(statuses),
         "required_text": required_text,
         "json_assertions": normalized_assertions,

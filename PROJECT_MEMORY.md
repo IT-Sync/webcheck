@@ -86,7 +86,18 @@ Recovery closes and resets the incident regardless of notification selection.
 Maintenance remains authoritative because active windows exclude a resource
 from scheduled checks and therefore from alert/reminder evaluation.
 
-Every successful central HTTP/content check updates a structured DNS snapshot.
+DNS change monitoring is enabled by default and configurable per resource through
+Mini App Operations → Checks and the authenticated checks API. Owners and managers
+can disable it independently of the owner's DNS notification preference. Disabled
+resources skip IP/NS/MX snapshots, event creation, and pending DNS alerts while
+HTTP, TLS, WHOIS, and the DNS resolution needed for HTTP requests continue.
+Disabling retires pending deliveries and marks the retained snapshot for a fresh
+baseline. Re-enabling refreshes that baseline without retrospective events;
+partial NS/MX failures keep the reset pending until a complete snapshot arrives.
+Historical DNS events remain available. Older checks API updates preserve the
+DNS setting when they omit the new boolean field.
+
+Every successful central HTTP/content check with DNS monitoring enabled updates a structured DNS snapshot.
 The first IP/NS/MX observation is a baseline; later changes retain both old and
 new arrays in durable rows and resource event history. Telegram delivery is
 deduplicated with a persisted delivery timestamp and follows the effective
@@ -267,8 +278,8 @@ regional classification; content/API assertions and DNS-change monitoring are im
 
 ## Validation Baseline
 
-The current suite contains 111 `unittest` tests. With Node.js on `PATH`, the
-standard run passes 105 and skips six PostgreSQL integration tests unless
+The current suite contains 126 `unittest` tests. With Node.js on `PATH`, the
+standard run passes 120 and skips six PostgreSQL integration tests unless
 `TEST_DATABASE_URL` points to a disposable database. Without Node.js, the
 frontend runtime regression test is also skipped. It exercises cached bootstrap,
 sorting/filtering, single and bulk addition, and deletion using DOM/API doubles.

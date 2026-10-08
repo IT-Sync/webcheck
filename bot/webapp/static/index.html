@@ -9,7 +9,7 @@
   <title>Webcheck</title>
   <link rel="stylesheet" href="/app/static/app.css?v=14">
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <script src="/app/static/app.js?v=15" defer></script>
+  <script src="/app/static/app.js?v=16" defer></script>
 </head>
 <body>
   <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -257,8 +257,10 @@
         <div class="ops-results" id="bulk-results"></div>
       </section>
       <form class="ops-panel hidden" data-ops-panel="checks" id="check-settings-form">
-        <h3>Содержимое и API</h3><p class="dialog-copy">Проверяйте точный HTTP-код, обязательный текст или значения JSON. Пустые поля сохраняют обычную проверку доступности.</p>
+        <h3>Проверки ресурса</h3><p class="dialog-copy">Проверяйте точный HTTP-код, обязательный текст или значения JSON. Пустые поля сохраняют обычную проверку доступности.</p>
         <label for="check-site">Ресурс</label><div class="plain-field"><select id="check-site"></select></div>
+        <div class="policy-grid"><label><input type="checkbox" id="dns-monitoring" checked> Мониторинг изменений DNS</label></div>
+        <p class="dialog-copy">Отслеживать изменения IP, NS и MX. При выключении новые события и уведомления DNS не создаются. Проверки доступности, SSL и домена продолжаются.</p>
         <label for="expected-status-codes">Допустимые HTTP-коды <small>через запятую</small></label><div class="plain-field"><input id="expected-status-codes" placeholder="200, 204"></div>
         <label for="required-response-text">Обязательный текст <small>точное вхождение</small></label><div class="plain-field"><input id="required-response-text" maxlength="2000" placeholder="service is healthy"></div>
         <label for="json-assertions">JSON-значения <small>объект «путь»: значение</small></label><textarea id="json-assertions" rows="5" placeholder='{"status":"ok","data.version":2}'></textarea>
@@ -267,7 +269,7 @@
       <form class="ops-panel hidden" data-ops-panel="notify" id="notification-form">
         <h3>Алерты владельца</h3><p class="dialog-copy">Эти значения применяются ко всем ресурсам без собственного переопределения.</p>
         <label for="notification-site">Область правил</label><div class="plain-field"><select id="notification-site"><option value="">Все ресурсы по умолчанию</option></select></div>
-        <div class="policy-grid"><label><input type="checkbox" id="notify-down"> Недоступность</label><label><input type="checkbox" id="notify-recovery"> Восстановление</label><label><input type="checkbox" id="notify-ssl"> SSL</label><label><input type="checkbox" id="notify-domain"> Домен</label><label><input type="checkbox" id="notify-dns"> DNS-изменения</label></div>
+        <div class="policy-grid"><label><input type="checkbox" id="notify-down"> Недоступность</label><label><input type="checkbox" id="notify-recovery"> Восстановление</label><label><input type="checkbox" id="notify-ssl"> SSL</label><label><input type="checkbox" id="notify-domain"> Домен</label><label><input type="checkbox" id="notify-dns"> Уведомления о DNS</label></div>
         <label for="notify-repeat">Повтор при сбое, минут <small>0 — не повторять</small></label><div class="plain-field"><input id="notify-repeat" type="number" min="0" max="10080"></div>
         <label for="notify-prolonged">Алерт о долгом сбое, минут <small>0 — выключен</small></label><div class="plain-field"><input id="notify-prolonged" type="number" min="0" max="10080"></div>
         <button class="submit-button" type="submit">Сохранить правила</button>

@@ -168,12 +168,14 @@ def ensure_base_schema(cursor, connection):
         expected_status_codes INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
         required_text TEXT,
         json_assertions JSONB NOT NULL DEFAULT '{}'::JSONB,
+        dns_monitoring_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )''')
 
     cursor.execute('''CREATE TABLE IF NOT EXISTS site_dns_snapshots (
         site_id INTEGER PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
         ips TEXT[], ns TEXT[], mx TEXT[],
+        baseline_required BOOLEAN NOT NULL DEFAULT FALSE,
         checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )''')
 

@@ -68,6 +68,7 @@
     bulkResults: document.querySelector("#bulk-results"),
     checkSettingsForm: document.querySelector("#check-settings-form"),
     checkSite: document.querySelector("#check-site"),
+    dnsMonitoring: document.querySelector("#dns-monitoring"),
     expectedStatusCodes: document.querySelector("#expected-status-codes"),
     requiredResponseText: document.querySelector("#required-response-text"),
     jsonAssertions: document.querySelector("#json-assertions"),
@@ -1025,6 +1026,7 @@
     if (!siteId) return;
     try {
       const { settings } = await api(`/api/webapp/sites/${siteId}/checks`);
+      elements.dnsMonitoring.checked = settings.dns_monitoring_enabled !== false;
       elements.expectedStatusCodes.value = (settings.expected_status_codes || []).join(", ");
       elements.requiredResponseText.value = settings.required_text || "";
       const assertions = settings.json_assertions || {};
@@ -1045,6 +1047,7 @@
       await api(`/api/webapp/sites/${siteId}/checks`, {
         method: "PUT",
         body: JSON.stringify({
+          dns_monitoring_enabled: elements.dnsMonitoring.checked,
           expected_status_codes: statuses,
           required_text: elements.requiredResponseText.value,
           json_assertions: assertions,

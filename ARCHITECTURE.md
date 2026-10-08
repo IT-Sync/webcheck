@@ -128,7 +128,17 @@ the check resolves every target address, rejects the whole result if any address
 is non-public, and pins the validated addresses in the aiohttp resolver.
 
 After a successful central response, the scheduler resolves a DNS snapshot in a
-worker thread. It compares the complete IP set and authoritative zone NS/MX sets
+worker thread only when per-resource `site_check_settings.dns_monitoring_enabled`
+is true (the compatibility default). Disabling skips DNS event monitoring but
+retains the DNS lookup and address pinning required for safe HTTP checks. Owners
+and managers toggle this through the existing checks endpoint; older requests
+that omit the boolean preserve its current value. Snapshot writes lock the site
+row and recheck the current setting to coordinate with in-flight settings changes.
+Disabling retires pending DNS deliveries and sets
+`site_dns_snapshots.baseline_required`. Re-enabling updates the retained baseline
+without events; the marker remains until IP/NS/MX lookups all succeed. Historical
+DNS events are preserved. DNS persistence work in the scheduler runs in worker
+threads. It compares the complete IP set and authoritative zone NS/MX sets
 with the last successful values. The baseline produces no event. Later changes
 are transactionally stored with old and new arrays and mirrored into resource
 history. Pending change rows are marked only after Telegram delivery succeeds;
@@ -344,7 +354,9 @@ repository transaction. Weekly reports include windows overlapping the previous
 seven days and distinguish currently active maintenance from manual pauses.
 
 `site_check_settings` stores optional expected status codes, required response
-text, and JSON assertions without changing legacy `sites` row positions.
+text, JSON assertions, and the DNS monitoring boolean without changing legacy
+`sites` row positions. Additive startup migrations add the boolean with default
+true and the snapshot baseline marker with default false.
 `site_dns_snapshots` stores the latest successful IP/NS/MX arrays, while
 `dns_change_events` durably retains each old/new transition and its Telegram
 delivery timestamp. Existing `sites.last_resolved_ip` values are backfilled as

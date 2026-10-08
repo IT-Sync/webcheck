@@ -574,7 +574,9 @@ async def site_check_settings(request: web.Request) -> web.Response:
         })
     try:
         data = await request.json()
-        settings = normalize_check_settings(data)
+        if not isinstance(data, dict):
+            raise ValueError("Настройки проверки должны быть JSON-объектом")
+        settings = normalize_check_settings({**get_site_check_settings(site[0]), **data})
         await validate_monitoring_target(
             site[3], dns_timeout_seconds=WEB_APP_DNS_TIMEOUT_SECONDS,
         )

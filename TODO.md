@@ -33,7 +33,10 @@ should not become a chronological changelog.
   integration coverage. Admin/Telegram deletion confirmation handlers have
   isolated regression coverage for explicit confirmation, cancellation, expiry,
   token binding/replay, authentication, and permission changes; real browser
-  and Telegram client validation remains part of release checks.
+  and Telegram client validation remains part of release checks. Per-resource
+  DNS monitoring toggles, disabled writes, and re-enable baselines have isolated
+  regression coverage; their additive schema upgrade still needs validation
+  against a disposable PostgreSQL instance and a live Mini App.
 - Continue separating the remaining Telegram callbacks, scheduler monitoring
   flow, admin request handlers, and database query domains behind existing
   compatibility imports. Owner-only commands, scheduled reporting, the admin
