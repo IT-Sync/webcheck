@@ -37,7 +37,7 @@ from bot.core.status_formatter import (
     append_agent_results, format_status_text, format_user_status_message,
     format_weekly_user_report_chunks, split_message
 )
-from bot.core.url_utils import normalize_url
+from bot.core.url_utils import is_valid_monitoring_url, normalize_url
 import os
 import asyncio
 import socket
@@ -600,6 +600,9 @@ async def admin_user_details(query: types.CallbackQuery):
 
 
 async def send_status_report(user_id, url, bot, site_id=None):
+    if not is_valid_monitoring_url(url):
+        await bot.send_message(user_id, "Некорректный адрес ресурса. Удалите его и добавьте сайт заново.")
+        return
     result = await check_resource(
         url,
         check_settings=get_site_check_settings(site_id) if site_id else None,

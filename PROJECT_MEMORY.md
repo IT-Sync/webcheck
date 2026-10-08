@@ -98,6 +98,21 @@ Public status pages are unauthenticated only after an owner explicitly publishes
 one. They expose selected display names, coarse state, last-check timestamps,
 and operator updates, while omitting URLs and private monitoring details.
 
+## Invalid Monitoring Targets
+
+Successful Mini App target validation returns the normalized URL to both single
+and bulk creation; a previous missing return could insert `NULL` URLs. Persistence
+now rejects missing/malformed HTTP(S) URLs before any database work. A shared
+pure shape validator also protects DNS/check entry points and agent dispatch.
+
+Scheduled monitoring skips invalid stored addresses before checks, incidents,
+or user notifications, logging the site and owner IDs for operators instead.
+Existing records remain intact and deletable with confirmation. The Mini App
+shows them as a configuration warning with instructions to remove and re-add;
+manual Mini App/Telegram checks return a clear error without network work.
+Original URLs cannot be inferred from `NULL`; no automatic cleanup or guessed
+address backfill is performed.
+
 ## Monitoring and Incident Controls
 
 HTTP outage alerts use a configurable consecutive-failure threshold and an
@@ -252,8 +267,8 @@ regional classification; content/API assertions and DNS-change monitoring are im
 
 ## Validation Baseline
 
-The current suite contains 100 `unittest` tests. With Node.js on `PATH`, the
-standard run passes 94 and skips six PostgreSQL integration tests unless
+The current suite contains 111 `unittest` tests. With Node.js on `PATH`, the
+standard run passes 105 and skips six PostgreSQL integration tests unless
 `TEST_DATABASE_URL` points to a disposable database. Without Node.js, the
 frontend runtime regression test is also skipped. It exercises cached bootstrap,
 sorting/filtering, single and bulk addition, and deletion using DOM/API doubles.

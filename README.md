@@ -314,6 +314,14 @@ the request path. DNS work has a configurable timeout, and blocking DNS and TLS
 operations run outside the asyncio event loop. The first complete result is
 produced by the scheduler or by **Check now**.
 
+Resources with a missing or malformed stored address are skipped by scheduled
+monitoring without repeated user alerts or network/agent checks. The Mini App
+shows a configuration warning and keeps deletion available. After deploying the
+fix, remove only resources with invalid addresses (for example, **Без адреса**)
+using the confirmation flow, then add their actual domains again. Existing data
+is not automatically deleted; a missing URL cannot be reconstructed safely.
+Single and bulk addition now persist the URL returned by target validation.
+
 The **Feedback** button starts a persisted feedback session, sends instructions
 to the user's bot chat, and closes the Mini App. The next non-command message is
 stored in the conversation and forwarded as a notification to `BOT_OWNER_ID`.

@@ -5,6 +5,8 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
+from bot.core.url_utils import is_valid_monitoring_url
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,14 +26,15 @@ class WebAppRegressionTest(unittest.TestCase):
         tree = ast.parse((ROOT / "bot/webapp/server.py").read_text())
         functions = [item for item in tree.body if isinstance(item, ast.FunctionDef)
                      and item.name in ("_iso", "_status_kind", "_site_payload")]
-        namespace = {"datetime": datetime}
+        namespace = {"datetime": datetime, "is_valid_monitoring_url": is_valid_monitoring_url}
         exec(compile(ast.Module(body=functions, type_ignores=[]), "server.py", "exec"), namespace)
         row = (1, 42, None, None, None, None, False, "", False,
                None, None, None, [None, "api", "", 123, " "])
         payload = namespace["_site_payload"](row)
         self.assertEqual(payload["tags"], ["api"])
         self.assertEqual(payload["url"], "")
-        self.assertEqual(payload["status_kind"], "pending")
+        self.assertEqual(payload["status_kind"], "warning")
+        self.assertIn("Некорректный адрес", payload["last_status"])
         down = list(row)
         down[3] = "https://down.example"
         down[4] = "HTTP: DOWN"

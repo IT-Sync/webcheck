@@ -11,6 +11,7 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from urllib.parse import urlparse
 
+from bot.core.url_utils import is_valid_monitoring_url
 from bot.core.content_checks import evaluate_response, has_content_assertions
 from bot.core.target_validation import TargetValidationError, resolve_public_addresses
 
@@ -95,7 +96,6 @@ async def check_http_details(
     }
 
     allow_http_fallback = os.getenv("HTTP_ALLOW_PLAIN_FALLBACK", "1") == "1"
-    hostname = urlparse(url).hostname
     try:
         resolved_ips = await resolve_public_addresses(
             url, dns_timeout_seconds=dns_timeout_seconds,
@@ -113,6 +113,7 @@ async def check_http_details(
             "resolved_ips": [],
             "target_validation_failed": True,
         }
+    hostname = urlparse(url).hostname
     resolved_ip = resolved_ips[0]
     urls_to_try = [url]
     if allow_http_fallback and url.startswith("https://"):
@@ -232,6 +233,8 @@ async def check_http(url, retries=3, delay=5, timeout_seconds=12):
 
 
 def _check_ssl_sync(url):
+    if not is_valid_monitoring_url(url):
+        return -1
     hostname = url.replace("https://", "").replace("http://", "").split("/")[0].lower()
     try:
         ctx = ssl.create_default_context()
@@ -256,6 +259,8 @@ async def check_ssl(url):
     return await asyncio.to_thread(_check_ssl_sync, url)
 
 async def check_domain_expiry(url):
+    if not is_valid_monitoring_url(url):
+        return -1, None, None
     hostname = url.replace("https://", "").replace("http://", "").split("/")[0].lower()
     hostname = hostname.replace("www.", "")
     parts = [p for p in hostname.split(".") if p]

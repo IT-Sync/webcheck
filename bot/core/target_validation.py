@@ -5,7 +5,7 @@ import ipaddress
 import socket
 from urllib.parse import urlparse
 
-from bot.core.url_utils import normalize_url
+from bot.core.url_utils import is_valid_monitoring_url, normalize_url
 
 
 class TargetValidationError(ValueError):
@@ -26,6 +26,8 @@ def _resolve_addresses(hostname, port):
 
 
 async def resolve_public_addresses(url: str, *, dns_timeout_seconds: float = 3) -> list[str]:
+    if not is_valid_monitoring_url(url):
+        raise TargetValidationError("Укажите корректный публичный HTTP(S) адрес")
     parsed = urlparse(url)
     hostname = parsed.hostname
     if not hostname or "." not in hostname:
@@ -50,3 +52,4 @@ async def validate_monitoring_target(value: str, *, dns_timeout_seconds: float =
         raise TargetValidationError("Укажите домен или адрес сайта")
     normalized = normalize_url(value)
     await resolve_public_addresses(normalized, dns_timeout_seconds=dns_timeout_seconds)
+    return normalized

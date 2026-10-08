@@ -158,9 +158,19 @@ site. The public repository query joins only the selected rows and projects them
 to display name, coarse state, last-check time, page copy, and operator updates.
 
 Before inserting a site, the server normalizes the URL, resolves its hostname
-with a bounded timeout, and rejects any non-global address. A full monitoring
-check is deliberately not part of insertion. DNS and TLS socket work runs in
+with a bounded timeout, and rejects any non-global address. Successful validation
+returns that normalized address to both single and bulk creation. Persistence
+rejects invalid address shapes before insertion. A full monitoring check is
+deliberately not part of insertion. DNS and TLS socket work runs in
 worker threads so it cannot block the aiohttp/aiogram event loop.
+
+Legacy records with missing/malformed URLs are retained for explicit deletion.
+Scheduled monitoring skips them before network work, incident evaluation, and
+user notifications; it logs only resource/owner IDs. The Mini App projects these
+records as configuration warnings. Manual checks reject them with a clear error.
+Central HTTP, SSL, WHOIS, and agent dispatch entry points also guard invalid
+addresses through the shared pure helper in `bot.core.url_utils`. No remote-agent
+protocol change or destructive migration is required.
 
 Manual checks are serialized per site within the process. They remain available
 during maintenance for diagnostics, run the central check, and collect

@@ -9,6 +9,7 @@ from aiohttp import web
 
 from bot.agent_server.checks import check_with_agents
 from bot.checks.service import check_resource
+from bot.core.url_utils import is_valid_monitoring_url
 from bot.core.content_checks import normalize_check_settings
 from bot.core.status_formatter import append_agent_results, format_status_text
 from bot.infra.db import (
@@ -102,16 +103,19 @@ def _status_kind(status: str | None, paused: bool, maintenance: bool = False) ->
 
 
 def _site_payload(row: tuple) -> dict:
+    invalid_target = not is_valid_monitoring_url(row[3])
+    status = ("Некорректный адрес. Удалите этот ресурс и добавьте сайт заново."
+              if invalid_target else row[4])
     paused = bool(row[6])
     maintenance = bool(row[8]) if len(row) > 8 else False
     return {
         "id": row[0],
         "url": row[3] or "",
-        "last_status": row[4],
+        "last_status": status,
         "last_checked": _iso(row[5]),
         "is_paused": paused,
         "is_maintenance": maintenance,
-        "status_kind": _status_kind(row[4], paused, maintenance),
+        "status_kind": _status_kind(status, paused, maintenance),
         "site_group": row[7] if len(row) > 7 else "",
         "maintenance_starts_at": _iso(row[9]) if len(row) > 9 else None,
         "maintenance_ends_at": _iso(row[10]) if len(row) > 10 else None,
@@ -841,6 +845,9 @@ async def check_site(request: web.Request) -> web.Response:
     if get_site_role(site[0], user.id) not in ("owner", "manager"):
         return _json_error("Доступно только для управляющего", status=403, code="forbidden")
 
+    if not is_valid_monitoring_url(site[3]):
+        return _json_error("Некорректный адрес. Удалите этот ресурс и добавьте сайт заново.",
+                           code="invalid_target")
     lock = _check_locks.setdefault(site[0], asyncio.Lock())
     if lock.locked():
         return _json_error("Проверка уже выполняется", status=409, code="check_running")

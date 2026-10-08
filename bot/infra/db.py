@@ -6,6 +6,7 @@ import csv
 import json
 from psycopg2.extras import Json
 
+from bot.core.url_utils import is_valid_monitoring_url
 from bot.infra.repository import get_repository
 from bot.infra.schema import ensure_base_schema
 
@@ -290,6 +291,8 @@ def _lock_managed_site(site_id, user_id):
 
 
 def add_site_to_project(actor_user_id, project_id, url, username=None, site_group=''):
+    if not is_valid_monitoring_url(url):
+        raise ValueError("A valid HTTP(S) monitoring URL is required")
     try:
         c.execute("SELECT owner_user_id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
         row = c.fetchone()
@@ -311,6 +314,8 @@ def add_site_to_project(actor_user_id, project_id, url, username=None, site_grou
 
 # Методы
 def add_site(user_id, url, username=None, site_group=""):
+    if not is_valid_monitoring_url(url):
+        raise ValueError("A valid HTTP(S) monitoring URL is required")
     project_id = ensure_personal_project(user_id)
     return add_site_to_project(user_id, project_id, url, username, site_group)
 

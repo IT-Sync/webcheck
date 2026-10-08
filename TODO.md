@@ -6,6 +6,13 @@ This file tracks unresolved work and technical debt. Completed work should be
 removed or moved into the current-state sections of `PROJECT_MEMORY.md`; it
 should not become a chronological changelog.
 
+## Operational Follow-up
+
+- Resources created through the former missing URL-validation return may have
+  `NULL` addresses. They are retained and excluded from monitoring; owners should
+  remove only the invalid resources with confirmation and re-add their actual
+  domains after deployment. Original addresses cannot be inferred from `NULL`.
+
 ## Medium Priority
 
 - Introduce one validated settings object instead of reading environment

@@ -15,6 +15,7 @@ from bot.checks.dns import resolve_dns_snapshot
 from bot.checks.monitor import check_domain_expiry, check_http_details
 from bot.checks.service import check_resource
 from bot.core.notification_policy import reminder_kind
+from bot.core.url_utils import is_valid_monitoring_url
 from bot.core.status_formatter import (
     append_agent_results,
     format_domain_expiry_alert, format_down_alert, format_recovery_alert,
@@ -26,6 +27,7 @@ from bot.telegram.callback_data import (
 from bot.telegram.reporting import BOT_OWNER_ID, notify_block, send_weekly_reports
 from datetime import datetime
 from aiogram.exceptions import TelegramForbiddenError
+import logging
 import os
 import asyncio
 import time
@@ -119,6 +121,11 @@ async def process_site(bot, site_row):
     site_id = site_row[0]
     user_id = site_row[1]
     url = site_row[2]
+    if not is_valid_monitoring_url(url):
+        logging.getLogger(__name__).warning(
+            "Skipping invalid monitoring target: site_id=%s user_id=%s", site_id, user_id,
+        )
+        return
     incident_started_at = site_row[3]
     last_success_at = site_row[4]
     check_settings = {
