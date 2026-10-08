@@ -324,6 +324,14 @@ through an authenticated proxy, and send a reply that is delivered by the bot.
 Users can also start the flow with `/feedback` or cancel it with
 `/cancel_feedback`.
 
+Manual deletion requires a separate confirmation. In the admin console, the
+first click opens a confirmation page: type the user ID before deleting all
+user data, or check the confirmation before deleting a specific site. Telegram
+`/delete`, `/remove_user`, and site deletion buttons show confirm/cancel buttons;
+existing older buttons also enter this flow. Confirmations expire after five
+minutes, are single-use, and become invalid after an application restart. The
+Mini App continues to ask for confirmation through its Telegram/native dialog.
+
 At startup the bot synchronizes its supported commands with Telegram's `/`
 command picker (default and Russian language variants). Administrative commands
 appear only in the private chat configured by `BOT_OWNER_ID`. Command-menu

@@ -12,6 +12,7 @@ from bot.infra.db import (
     get_user_logs, log_user_action,
 )
 from bot.core.status_formatter import format_weekly_user_report_chunks
+from bot.telegram.deletion import prompt_user_deletion
 
 
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
@@ -170,22 +171,7 @@ async def admin_remove_user(message: types.Message):
         message.from_user.username
     )
 
-    try:
-        sites_deleted, logs_deleted, messages_deleted = delete_user_data(target_user_id)
-    except ValueError as exc:
-        if str(exc) != "owned_projects_have_members":
-            raise
-        return await message.answer("У пользователя есть проекты с участниками. Сначала перенесите права или удалите участников.")
-
-    if sites_deleted == 0 and logs_deleted == 0 and messages_deleted == 0:
-        await message.answer(f"Данные пользователя {target_user_id} не найдены.")
-    else:
-        await message.answer(
-            f"🧹 Пользователь {target_user_id} удалён.\n"
-            f"Удалено сайтов: {sites_deleted}\n"
-            f"Удалено записей логов: {logs_deleted}\n"
-            f"Удалено записей сообщений: {messages_deleted}"
-        )
+    await prompt_user_deletion(message, message.from_user.id, target_user_id)
 
 async def admin_events(message: types.Message):
     if message.from_user.id != BOT_OWNER_ID:

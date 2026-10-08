@@ -181,6 +181,28 @@ album items continue to match through `active_media_group_id`. The bot notifies
 operators read the thread and reply through the admin console, which sends the
 response through the same bot before recording it as an administrator message.
 
+## Manual Deletion Flow
+
+Administrative deletion POST routes remain stable. The first authenticated POST
+returns a confirmation page and does not mutate storage. A second POST must
+carry an explicit target confirmation and a five-minute single-use token bound
+to the action and target. User-data deletion requires typing the user ID; site
+deletion requires checking a confirmation for that specific resource. An invalid,
+expired, or reused token is rejected before persistence is called.
+
+`bot.telegram.deletion` owns Telegram deletion prompts and confirm/cancel
+callbacks. Existing command and callback entry points now request confirmation;
+legacy callback formats remain accepted. The confirmation binds a stable target
+ID to the initiating Telegram identity and chat, and privileged/site permissions
+are checked again before deletion. PostgreSQL calls in this module run through
+`asyncio.to_thread`. Mini App deletion retains its client confirmation dialog and
+existing authenticated API contract.
+
+Both interactive surfaces use bounded process-local stores implemented in
+`bot.core.confirmation`. Restart invalidates pending confirmations. These stores
+fit the existing single-process topology; multiple replicas would need shared
+confirmation state or routing affinity. No schema migration is required.
+
 ## Web Routes
 
 | Listener | Route | Authentication | Purpose |

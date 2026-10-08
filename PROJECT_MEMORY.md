@@ -131,6 +131,21 @@ stored as Telegram file identifiers rather than database blobs. The bot notifies
 attachment viewing, complete conversation history, and replies delivered from
 the bot.
 
+## Manual Deletion Confirmation
+
+Admin-console user/site deletion first renders a confirmation page without
+writing to the database. Deleting all user data requires typing the target user
+ID; deleting one site requires checking an explicit confirmation. The server
+requires a single-use token bound to the action and target, valid for five minutes.
+Telegram `/delete`, `/remove_user`, current ID callbacks, and legacy URL callbacks
+also prompt with confirm/cancel buttons. Tokens are bound to the initiating user
+and chat; permission checks are repeated before deletion, and sites are deleted
+by ID rather than all matches of a URL. The Mini App retains its existing
+Telegram/native confirmation dialog before a site DELETE request.
+Confirmation stores are bounded and process-local; restart invalidates pending
+prompts safely. Existing project/team deletion guards remain authoritative.
+Telegram deletion persistence calls run in worker threads.
+
 ## Telegram Command Menu
 
 Startup publishes all supported public commands, including feedback cancellation,
@@ -237,8 +252,8 @@ regional classification; content/API assertions and DNS-change monitoring are im
 
 ## Validation Baseline
 
-The current suite contains 84 `unittest` tests. With Node.js on `PATH`, the
-standard run passes 78 and skips six PostgreSQL integration tests unless
+The current suite contains 100 `unittest` tests. With Node.js on `PATH`, the
+standard run passes 94 and skips six PostgreSQL integration tests unless
 `TEST_DATABASE_URL` points to a disposable database. Without Node.js, the
 frontend runtime regression test is also skipped. It exercises cached bootstrap,
 sorting/filtering, single and bulk addition, and deletion using DOM/API doubles.

@@ -8,6 +8,7 @@ from aiohttp import web
 from aiogram.exceptions import TelegramForbiddenError
 
 from bot.admin_console.layout import esc, page
+from bot.core.confirmation import ConfirmationStore
 from bot.agent_server.registry import AGENT_REGISTRY
 from bot.public_status.server import setup_public_status_routes
 from bot.webapp.server import WEB_APP_ENABLED, setup_webapp_routes
@@ -40,6 +41,7 @@ ADMIN_WEB_TOKEN = os.getenv("ADMIN_WEB_TOKEN")
 ADMIN_WEB_HOST = os.getenv("ADMIN_WEB_HOST", "0.0.0.0")
 ADMIN_WEB_PORT = int(os.getenv("ADMIN_WEB_PORT", "8080"))
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
+_delete_confirmations = ConfirmationStore()
 
 
 def fmt_dt(value) -> str:
@@ -802,9 +804,49 @@ async def broadcast_message(request: web.Request) -> web.Response:
     raise redirect_messages(f"Массовая отправка завершена: успешно {sent}, ошибок {failed}")
 
 
+def deletion_confirmation(action: str, target_id: int, description: str, back_url: str):
+    token = _delete_confirmations.issue(action, target_id, "web-admin")
+    if action == "user":
+        warning = "Будут удалены все сайты пользователя, их история, логи, записи сообщений и переписка обратной связи."
+        field = f'''<label>Для подтверждения введите ID пользователя: <code>{target_id}</code>
+  <input name="confirm_target" required autocomplete="off" inputmode="numeric" pattern="{target_id}" placeholder="{target_id}"></label>'''
+    else:
+        warning = "Будет удалён только этот сайт и его история мониторинга."
+        field = '<label><input type="checkbox" name="confirm_target" value="' + str(target_id) + '" required> Подтверждаю удаление этого сайта</label>'
+    body = f'''<h2>Подтверждение удаления</h2>
+<p>{esc(description)}</p>
+<p class="status-warning">{warning} Это действие нельзя отменить.</p>
+<p>Подтверждение действует 5 минут.</p>
+<form method="post" action="/admin/{'users' if action == 'user' else 'sites'}/{target_id}/delete">
+  <input type="hidden" name="confirmation" value="{esc(token)}">
+  {field}
+  <div class="actions"><a class="button secondary" href="{esc(back_url)}">Отмена</a>
+  <button class="danger" type="submit">Подтвердить удаление</button></div>
+</form>'''
+    response = page("Подтверждение удаления", body, "users")
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+async def deletion_is_confirmed(request, action, target_id):
+    data = await request.post()
+    if "confirmation" not in data:
+        return False
+    if (data.get("confirm_target") != str(target_id)
+            or not _delete_confirmations.take(
+                data.get("confirmation"), "web-admin", action=action, target_id=target_id,
+            )):
+        raise web.HTTPBadRequest(text="Удаление не подтверждено или подтверждение истекло. Откройте страницу пользователя и повторите действие.")
+    return True
+
+
 @require_auth
 async def delete_user(request: web.Request) -> web.Response:
     user_id = int(request.match_info["user_id"])
+    if not await deletion_is_confirmed(request, "user", user_id):
+        profile = get_admin_user(user_id)
+        description = f"Пользователь {user_id} (@{profile.get('username') or 'без username'}). Сайтов: {profile.get('site_count', 0)}."
+        return deletion_confirmation("user", user_id, description, f"/admin/users/{user_id}")
     try:
         sites_deleted, logs_deleted, messages_deleted = delete_user_data(user_id)
     except ValueError as exc:
@@ -823,6 +865,12 @@ async def delete_user(request: web.Request) -> web.Response:
 async def delete_site(request: web.Request) -> web.Response:
     site_id = int(request.match_info["site_id"])
     site = get_site_by_id(site_id)
+    if not site:
+        raise web.HTTPNotFound(text="Сайт уже удалён или не найден")
+    if not await deletion_is_confirmed(request, "site", site_id):
+        return deletion_confirmation("site", site_id,
+                                     f"Сайт {site[3]} (ID {site_id}), пользователь {site[1]}.",
+                                     f"/admin/users/{site[1]}")
     admin_delete_site_by_id(site_id)
     if site:
         log_user_action(BOT_OWNER_ID, f"web: удалил сайт {site[3]} пользователя {site[1]}", "web-admin")

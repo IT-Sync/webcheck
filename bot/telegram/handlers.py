@@ -27,6 +27,7 @@ from bot.telegram.admin_commands import (
     weekly_admin_report, admin_status, admin_remove_user, admin_events,
     admin_user_logs, export_logs_csv, export_sites_csv, register_admin_handlers,
 )
+from bot.telegram.deletion import prompt_site_deletion, handle_deletion_confirmation
 from bot.telegram.callback_data import (
     admin_delete_callback, site_delete_callback, site_pause_callback,
     site_resume_callback, site_status_callback, site_check_now_callback,
@@ -44,6 +45,8 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 router = Router()
+router.callback_query(F.data.startswith("dconfirm:"))(handle_deletion_confirmation)
+router.callback_query(F.data.startswith("dcancel:"))(handle_deletion_confirmation)
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
 WEB_APP_URL = os.getenv("WEB_APP_URL", "").strip()
 
@@ -287,12 +290,10 @@ async def delete_website(message: types.Message):
     user_id = message.from_user.id
     try:
         url = normalize_url(message.text.split(" ", 1)[1].strip())
-        deleted = delete_site(user_id, url)
-        log_user_action(user_id, f"Удалил сайт: {url}", message.from_user.username)
-        if deleted:
-            await message.answer(f"🗑 Удалён сайт: {url}")
-        else:
-            await message.answer("❌ Сайт не найден среди ваших.")
+        site = get_site_by_url_for_user(user_id, url)
+        if not site:
+            return await message.answer("❌ Сайт не найден среди ваших.")
+        await prompt_site_deletion(message, user_id, site[0])
     except IndexError:
         await message.answer("Используйте: /delete <URL>")
 
@@ -386,17 +387,8 @@ async def inline_delete_by_id(query: types.CallbackQuery):
     except (ValueError, IndexError):
         return await query.answer("❌ Неверные данные", show_alert=True)
 
-    site = get_site_for_user(site_id, query.from_user.id)
-    if not site:
-        return await query.answer("❌ Сайт не найден", show_alert=True)
-
-    deleted = delete_site_by_id(site_id, query.from_user.id)
-    log_user_action(query.from_user.id, f"Удалил сайт (inline): {site[3]}", query.from_user.username)
-    if deleted:
-        await query.message.answer(f"🗑 Удалён сайт: {site[3]}")
-    else:
-        await query.message.answer("❌ Сайт не найден среди ваших.")
-    await query.answer("Удалено.")
+    await prompt_site_deletion(query.message, query.from_user.id, site_id)
+    await query.answer()
 
 @router.callback_query(F.data.startswith("pause:"))
 async def inline_pause_by_id(query: types.CallbackQuery):
@@ -516,13 +508,11 @@ async def inline_site_history(query: types.CallbackQuery):
 @router.callback_query(F.data.startswith("delete:"))
 async def inline_delete(query: types.CallbackQuery):
     url = normalize_url(query.data.split(":", 1)[1])
-    deleted = delete_site(query.from_user.id, url)
-    log_user_action(query.from_user.id, f"Удалил сайт (inline): {url}", query.from_user.username)
-    if deleted:
-        await query.message.answer(f"🗑 Удалён сайт: {url}")
-    else:
-        await query.message.answer("❌ Сайт не найден среди ваших.")
-    await query.answer("Удалено.")
+    site = get_site_by_url_for_user(query.from_user.id, url)
+    if not site:
+        return await query.answer("Сайт не найден", show_alert=True)
+    await prompt_site_deletion(query.message, query.from_user.id, site[0])
+    await query.answer()
 
 #@router.callback_query(F.data.startswith("admindelete_raw:"))
 #async def admin_delete_raw(query: types.CallbackQuery):
@@ -544,12 +534,12 @@ async def admin_delete_site_for_user(query: types.CallbackQuery):
     except ValueError:
         return await query.answer("❌ Неверный формат данных", show_alert=True)
 
-    deleted = delete_site(user_id, url)  # используем общую функцию
-    if deleted:
-        await query.message.answer(f"🗑 Сайт {url} удалён у пользователя {user_id}")
-    else:
-        await query.message.answer(f"⚠️ Сайт {url} не найден у пользователя {user_id}")
-    await query.answer("Удалено.")
+    site = next((site for site in get_sites(user_id)
+                 if site[1] == user_id and site[3] == url), None)
+    if not site:
+        return await query.answer("Сайт не найден", show_alert=True)
+    await prompt_site_deletion(query.message, query.from_user.id, site[0], admin=True)
+    await query.answer()
 
 @router.callback_query(F.data.startswith("ad:"))
 async def admin_delete_site_by_site_id(query: types.CallbackQuery):
@@ -561,16 +551,8 @@ async def admin_delete_site_by_site_id(query: types.CallbackQuery):
     except (ValueError, IndexError):
         return await query.answer("❌ Неверный формат данных", show_alert=True)
 
-    site = get_site_by_id(site_id)
-    if not site:
-        return await query.answer("Сайт уже удалён", show_alert=True)
-
-    deleted = admin_delete_site_by_id(site_id)
-    if deleted:
-        await query.message.answer(f"🗑 Сайт {site[3]} удалён у пользователя {site[1]}")
-    else:
-        await query.message.answer(f"⚠️ Сайт {site[3]} не найден")
-    await query.answer("Удалено.")
+    await prompt_site_deletion(query.message, query.from_user.id, site_id, admin=True)
+    await query.answer()
 
 @router.callback_query(F.data.startswith("adminuser:"))
 async def admin_user_details(query: types.CallbackQuery):

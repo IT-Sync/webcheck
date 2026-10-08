@@ -23,7 +23,10 @@ should not become a chronological changelog.
   and WebSocket-agent timeouts. Frontend null-value regressions now run
   against production JavaScript with DOM/API doubles; real-browser Mini App
   mutation flows and live Telegram command-menu registration still need
-  integration coverage.
+  integration coverage. Admin/Telegram deletion confirmation handlers have
+  isolated regression coverage for explicit confirmation, cancellation, expiry,
+  token binding/replay, authentication, and permission changes; real browser
+  and Telegram client validation remains part of release checks.
 - Continue separating the remaining Telegram callbacks, scheduler monitoring
   flow, admin request handlers, and database query domains behind existing
   compatibility imports. Owner-only commands, scheduled reporting, the admin
@@ -36,6 +39,9 @@ should not become a chronological changelog.
 - Mini App manual-check locks are process-local. Before running multiple central
   application replicas, move deduplication to PostgreSQL or a distributed lock
   with a short lease.
+- Interactive deletion confirmations are process-local; multiple replicas need
+  shared pending-confirmation state or routing affinity. Restarts safely
+  invalidate pending confirmations.
 - The remote-agent registry is process-local and assumes one central agent
   server instance.
 - Network-check behavior exists in both `bot/checks/` and `agent/checks.py` and
