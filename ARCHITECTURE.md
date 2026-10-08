@@ -33,8 +33,9 @@ published on a private address reachable from Nginx and protected by a firewall.
 
 ## Component Boundaries
 
-- `bot/main.py` loads `.env`, creates the bot, configures the Telegram Mini App
-  menu button, starts the scheduler and both web servers, and begins polling.
+- `bot/main.py` loads `.env`, creates the bot, publishes public Telegram commands
+  and a separate owner-chat command list, configures the Telegram Mini App menu
+  button, starts the scheduler and both web servers, and begins polling.
 - `bot/telegram/` owns bot commands, callbacks, scheduler integration, message
   tracking, and notification delivery. Owner-only commands live in
   `admin_commands.py`; scheduled report delivery and blocked-user cleanup live
@@ -91,7 +92,10 @@ and request-avoidance measure, not an authorization boundary.
 The frontend immediately renders a per-user `sessionStorage` snapshot when
 available, then refreshes `/api/webapp/bootstrap`. Metrics act as status filters,
 and the default client-side sort places problematic resources first. The cache
-is a display optimization and is never authoritative.
+is a display optimization and is never authoritative. URL display/sorting and
+tag rendering/filtering tolerate missing or invalid legacy/cache values. The API
+also emits an empty string for a missing URL and excludes non-string/empty tags;
+resource IDs remain available for deletion without data-cleanup migrations.
 
 Sites belong to `projects`, each with an explicit owner; `project_members`
 stores `viewer` and `manager` roles. The additive startup migration backfills

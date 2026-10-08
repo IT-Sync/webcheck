@@ -1,6 +1,6 @@
 # TODO
 
-Last updated: 2026-09-26
+Last updated: 2026-10-08
 
 This file tracks unresolved work and technical debt. Completed work should be
 removed or moved into the current-state sections of `PROJECT_MEMORY.md`; it
@@ -20,7 +20,10 @@ should not become a chronological changelog.
   against old and current schemas, scheduler behavior,
   notification deduplication, feedback persistence, media proxying, album
   capture and reply delivery, retention boundaries and rollback, aggregation,
-  and WebSocket-agent timeouts.
+  and WebSocket-agent timeouts. Frontend null-value regressions now run
+  against production JavaScript with DOM/API doubles; real-browser Mini App
+  mutation flows and live Telegram command-menu registration still need
+  integration coverage.
 - Continue separating the remaining Telegram callbacks, scheduler monitoring
   flow, admin request handlers, and database query domains behind existing
   compatibility imports. Owner-only commands, scheduled reporting, the admin

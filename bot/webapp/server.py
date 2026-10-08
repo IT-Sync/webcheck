@@ -106,7 +106,7 @@ def _site_payload(row: tuple) -> dict:
     maintenance = bool(row[8]) if len(row) > 8 else False
     return {
         "id": row[0],
-        "url": row[3],
+        "url": row[3] or "",
         "last_status": row[4],
         "last_checked": _iso(row[5]),
         "is_paused": paused,
@@ -116,7 +116,8 @@ def _site_payload(row: tuple) -> dict:
         "maintenance_starts_at": _iso(row[9]) if len(row) > 9 else None,
         "maintenance_ends_at": _iso(row[10]) if len(row) > 10 else None,
         "maintenance_reason": row[11] if len(row) > 11 else "",
-        "tags": list(row[12] or []) if len(row) > 12 else [],
+        "tags": [tag for tag in (row[12] or [])
+                 if isinstance(tag, str) and tag.strip()] if len(row) > 12 else [],
         "role": row[13] if len(row) > 13 else "owner",
         "project_id": row[14] if len(row) > 14 else None,
         "project_name": row[15] if len(row) > 15 else "Personal",

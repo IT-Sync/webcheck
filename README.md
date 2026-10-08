@@ -324,6 +324,14 @@ through an authenticated proxy, and send a reply that is delivered by the bot.
 Users can also start the flow with `/feedback` or cancel it with
 `/cancel_feedback`.
 
+At startup the bot synchronizes its supported commands with Telegram's `/`
+command picker (default and Russian language variants). Administrative commands
+appear only in the private chat configured by `BOT_OWNER_ID`. Command-menu
+registration failures are logged and do not prevent the bot from starting.
+After an update, reopen the Mini App to load the versioned frontend script.
+Missing URL/tag values in existing or cached resources no longer interrupt
+sorting or hide the resource deletion controls.
+
 ## Remote Agents
 
 The central WebSocket listener uses port `11001`. Agents initiate outbound

@@ -156,7 +156,14 @@
   }
 
   function hostFromUrl(value) {
-    try { return new URL(value).hostname; } catch { return value; }
+    const url = typeof value === "string" ? value : "";
+    try { return new URL(url).hostname; } catch { return url || "Без адреса"; }
+  }
+
+  function tagsForSite(site) {
+    return Array.isArray(site.tags)
+      ? site.tags.filter((tag) => typeof tag === "string" && tag.trim())
+      : [];
   }
 
   function relativeTime(value) {
@@ -203,9 +210,9 @@
         || (state.filter === "paused" && site.is_paused)
         || site.status_kind === state.filter;
       const groupMatches = state.group === "all" || (site.site_group || "") === state.group;
-      const tagMatches = state.tag === "all" || (site.tags || []).includes(state.tag);
+      const tagMatches = state.tag === "all" || tagsForSite(site).includes(state.tag);
       const projectMatches = state.project === "all" || String(site.project_id) === state.project;
-      const haystack = [site.url, site.site_group || "", ...(site.tags || [])].join(" ").toLocaleLowerCase("ru");
+      const haystack = [site.url, site.site_group || "", ...tagsForSite(site)].join(" ").toLocaleLowerCase("ru");
       return statusMatches && groupMatches && tagMatches && projectMatches && haystack.includes(state.query);
     });
     const priority = { down: 0, warning: 1, pending: 2, up: 3, maintenance: 4, paused: 5 };
@@ -256,7 +263,7 @@
     const maintenanceBadge = card.querySelector(".maintenance-badge");
     if (site.is_maintenance) maintenanceBadge.classList.remove("hidden");
     const tagRail = card.querySelector(".site-tags");
-    tagRail.replaceChildren(...(site.tags || []).map((tag) => {
+    tagRail.replaceChildren(...tagsForSite(site).map((tag) => {
       const token = document.createElement("span");
       token.textContent = "#" + tag;
       return token;
@@ -324,7 +331,8 @@
 
   function renderGroups() {
     const selected = state.group;
-    const groups = [...new Set(state.sites.map((site) => site.site_group).filter(Boolean))]
+    const groups = [...new Set(state.sites.map((site) => site.site_group)
+      .filter((group) => typeof group === "string" && group.trim()))]
       .sort((left, right) => left.localeCompare(right, "ru"));
     elements.group.replaceChildren(
       new Option("Все группы", "all"),
@@ -336,7 +344,7 @@
 
   function renderTags() {
     const selected = state.tag;
-    const tags = [...new Set(state.sites.flatMap((site) => site.tags || []))]
+    const tags = [...new Set(state.sites.flatMap((site) => tagsForSite(site)))]
       .sort((left, right) => left.localeCompare(right, "ru"));
     elements.tag.replaceChildren(
       new Option("Все теги", "all"),
@@ -471,7 +479,7 @@
   }
 
   async function changeTags(site) {
-    const current = (site.tags || []).join(", ");
+    const current = tagsForSite(site).join(", ");
     const value = window.prompt("Теги через запятую (пустое значение уберёт теги):", current);
     if (value === null) return;
     try {

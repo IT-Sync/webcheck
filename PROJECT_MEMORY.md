@@ -1,6 +1,6 @@
 # Project Memory
 
-Last updated: 2026-09-26
+Last updated: 2026-10-08
 
 ## Current State
 
@@ -51,6 +51,8 @@ Current behavior:
 - shows availability, average and peak latency, and availability grouped by
   remote agent and region;
 - renders session-cached site data immediately and refreshes it from the server;
+- tolerates missing URLs and invalid/null tag values in API and cached data so
+  sorting and rendering cannot hide resource controls after single or bulk addition;
 - supports closing the add dialog through its close control, Telegram Back,
   Escape, and backdrop interaction where the web view supports it;
 - shows a dedicated branded access page instead of the monitoring dashboard when
@@ -128,6 +130,14 @@ stored as Telegram file identifiers rather than database blobs. The bot notifies
 `BOT_OWNER_ID`, while `/admin/feedback` provides an unread inbox, protected
 attachment viewing, complete conversation history, and replies delivered from
 the bot.
+
+## Telegram Command Menu
+
+Startup publishes all supported public commands, including feedback cancellation,
+to Telegram's default and private-chat command scopes in the default and Russian
+language variants. Owner-only commands are added only to the `BOT_OWNER_ID` chat
+scope. Registration failures are logged without stopping application startup.
+The Mini App menu button remains configured independently.
 
 ## Module Boundaries
 
@@ -227,9 +237,11 @@ regional classification; content/API assertions and DNS-change monitoring are im
 
 ## Validation Baseline
 
-The current suite contains 79 `unittest` tests. The standard run passes 73 and
-skips six PostgreSQL integration tests unless `TEST_DATABASE_URL` points to a
-disposable database.
+The current suite contains 84 `unittest` tests. With Node.js on `PATH`, the
+standard run passes 78 and skips six PostgreSQL integration tests unless
+`TEST_DATABASE_URL` points to a disposable database. Without Node.js, the
+frontend runtime regression test is also skipped. It exercises cached bootstrap,
+sorting/filtering, single and bulk addition, and deletion using DOM/API doubles.
 
 ```bash
 python -m unittest discover -s tests -v

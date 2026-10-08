@@ -11,6 +11,7 @@ from aiogram.types import MenuButtonWebApp, WebAppInfo
 from bot.infra.db import migrate_add_notification_flags
 from bot.agent_server.server import start_agent_ws_server
 from bot.admin_console.server import start_admin_console
+from bot.telegram.commands import configure_bot_commands
 from bot.telegram.handlers import register_handlers
 from bot.telegram.scheduler import start_scheduler
 from bot.telegram.tracked_bot import TrackedBot
@@ -36,6 +37,7 @@ async def main():
     migrate_add_notification_flags()
 
     bot = TrackedBot(token=BOT_TOKEN)
+    await configure_bot_commands(bot)
     await configure_web_app_menu(bot)
     dp = Dispatcher()
     register_handlers(dp, bot)
